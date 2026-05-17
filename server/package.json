@@ -1,0 +1,16 @@
+{
+  "name": "mqtt-printer-server",
+  "version": "1.0.0",
+  "description": "Simple API that converts markdown or task lists into ESC/POS and publishes to an MQTT topic",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.0.3",
+    "express": "^4.18.2",
+    "mqtt": "^4.3.7",
+    "receiptline": "^2.1.1",
+    "sharp": "^0.33.1"
+  }
+}

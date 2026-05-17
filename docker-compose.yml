@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  # Mosquitto broker for message passing
+  mqtt-broker:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"
+    volumes:
+      - mosquitto-data:/mosquitto/data
+      - mosquitto-log:/mosquitto/log
+    environment:
+      - MOSQUITTO_ALLOW_ANONYMOUS=true
+
+  # Node.js API server that publishes print jobs to MQTT
+  mqtt-server:
+    build: ./server
+    restart: unless-stopped
+    depends_on:
+      - mqtt-broker
+    env_file:
+      - ./server/.env
+    ports:
+      - "3000:3000"
+    # Ensure the server waits until the broker is up
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # Docker Compose will automatically supply the service name `mqtt-broker` as the host
+    environment:
+      - MQTT_URL=mqtt://mqtt-broker:1883
+
+volumes:
+  mosquitto-data:
+  mosquitto-log:
