@@ -4,6 +4,7 @@
   "description": "Simple API that converts markdown or task lists into ESC/POS and publishes to an MQTT topic",
   "main": "app.js",
   "scripts": {
+    "check": "node --check app.js",
     "start": "node app.js"
   },
   "dependencies": {

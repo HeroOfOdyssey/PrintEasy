@@ -1,32 +1,53 @@
-# MQTT Printer Bridge
+# PrintEasy
 
-This repository provides an end‑to‑end solution for turning a thermal receipt printer into a cloud‑connected device.  It uses **MQTT** to deliver print jobs from your server to a microcontroller that is paired with the printer (via Bluetooth or serial).  The design is inspired by the lessons learned when building cloud‑connected thermal printers: HTTP polling and WebSockets can work, but MQTT is far more efficient and reliable on constrained devices.
+PrintEasy is an end-to-end MQTT bridge for sending custom receipt print jobs from a server/operator to a printer-connected device on your local network. The server renders tasks, markdown, QR codes, images, or raw ESC/POS into printer-ready bytes and publishes them to MQTT. Any client that subscribes to the print topic and forwards the binary payload to a compatible printer can be used.
+
+The included client is an ESP32 Arduino sketch for Bluetooth Classic SPP printers such as the Epson TM-P60II. That sketch is a reference implementation, not a protocol limit.
 
 ## Overview
 
 The system consists of two major components:
 
-1. **Server (`./server`)** – A Node.js service that exposes a simple HTTP API for creating print jobs.  It converts markdown or task lists into Epson ESC/POS commands using [`receiptline`](https://github.com/receiptline/receiptline) and publishes them to an MQTT topic.  The server also supports printing QR codes and images: clients can include a `qr` field to encode a string into an ESC/POS QR symbol using the printer’s built‑in commands, and an `image` field containing a base64‑encoded PNG/JPEG that will be rasterised into a 1‑bit bitmap and appended to the job.  The server can run standalone or inside Docker and is easy to deploy alongside an MQTT broker.
-   The server also implements a minimal [Model Context Protocol](https://modelcontextprotocol.com/) interface: clients can discover available tools via a JSON‑RPC call to `/mcp` and invoke the `printReceipt` tool to print text, QR codes or images.  A corresponding `/mcp/sse` endpoint streams tool definitions and invocation results via server‑sent events for asynchronous integrations.
+1. **Server (`./server`)** - A Node.js service that exposes HTTP and MCP interfaces for creating print jobs. It converts markdown or task lists into ESC/POS commands using [`receiptline`](https://github.com/receiptline/receiptline), rasterizes markdown/images with `sharp`, generates native ESC/POS QR codes, and publishes the resulting binary payload to an MQTT topic.
+   The MCP endpoint supports `initialize`, `ping`, `tools/list`, and `tools/call` with tools for printing, previewing, publishing trusted raw ESC/POS, and checking status.
 
-2. **Client (`./client`)** – An Arduino sketch for ESP32 (or similar) microcontrollers.  It connects to your Wi‑Fi network, subscribes to the print topic on the MQTT broker, then forwards the raw ESC/POS data to the printer via Bluetooth Classic (SPP).  The firmware automatically reconnects to Wi‑Fi, MQTT and the Bluetooth printer if any connection drops, and sends periodic wake‑up commands to keep the printer from sleeping.
+2. **Client (`./client`)** - An ESP32 Arduino reference client. It connects to Wi-Fi, subscribes to the MQTT print topic, and forwards the raw ESC/POS bytes to a Bluetooth Classic SPP printer. Other clients can be built for Linux, Raspberry Pi, desktop apps, USB printers, serial printers, network printers, or other microcontrollers as long as they implement the same MQTT payload contract.
 
-MQTT’s lightweight publish/subscribe model eliminates heavy SSL handshakes and polling, greatly reducing memory usage on the microcontroller and improving reliability.  In practice this change reduced latency and stopped the device from crashing under load.
+MQTT's lightweight publish/subscribe model keeps the device side simple: subscribe to a topic, receive binary ESC/POS payloads, write them to the printer transport.
+
+## Compatibility
+
+Current server output is ESC/POS-oriented. It should work with printers that accept ESC/POS commands, including many Epson-compatible thermal printers. The default raster width is tuned for Epson TM-P60II 58 mm paper at 420 dots, but this is configurable with `PRINTER_DOTS` and related raster settings.
+
+Current included client support is ESP32 + Arduino + Bluetooth Classic SPP. The architecture can support more platforms because the wire protocol is only MQTT carrying binary ESC/POS bytes:
+
+```text
+operator / app / MCP client
+        -> PrintEasy server
+        -> MQTT topic, default receipt/print
+        -> any bridge client
+        -> printer transport, such as Bluetooth SPP, USB, serial, TCP
+        -> ESC/POS printer
+```
+
+For non-ESP32 clients, the important requirements are binary-safe MQTT payload handling, enough MQTT packet buffer for raster jobs, and a way to write raw bytes to the printer.
 
 ## Project structure
 
 ```text
 mqtt_printer_bridge
 ├── client
-│   ├── README.md           – Instructions for flashing the ESP32 firmware
-│   └── esp32_mqtt_printer.ino – Arduino sketch for the microcontroller
+│   ├── README.md              – Reference ESP32 bridge instructions
+│   └── esp32_mqtt_printer.ino – ESP32 Arduino sketch
+├── mosquitto
+│   └── mosquitto.conf         – Local broker config for Docker Compose
 ├── server
-│   ├── Dockerfile          – Container build for the Node.js server
-│   ├── README.md           – Usage and configuration for the server
-│   ├── app.js              – Express/MQTT service that publishes print jobs
-│   ├── package.json        – Node.js dependencies and scripts
-│   └── .env.example        – Example environment configuration
-└── docker-compose.yml      – Compose file to run the server and an MQTT broker
+│   ├── Dockerfile             – Container build for the Node.js server
+│   ├── README.md              – Usage and configuration for the server
+│   ├── app.js                 – Express/MQTT/MCP service
+│   ├── package.json           – Node.js dependencies and scripts
+│   └── .env.example           – Example environment configuration
+└── docker-compose.yml         – Compose file to run the server and MQTT broker
 ```
 
 ## Running with Docker Compose
@@ -42,6 +63,12 @@ docker compose build
 docker compose up
 ```
 
+If host port `3000` is already in use, publish the server on another local port:
+
+```sh
+HTTP_PORT=3002 docker compose up
+```
+
 3. Once the containers are running, you can send a print job via HTTP:
 
 ```sh
@@ -51,9 +78,9 @@ curl -X POST http://localhost:3000/print \
   --data-raw '{"tasks": ["Buy milk", "Check email", "Walk the dog"]}'
 ```
 
-   The server will convert your task list into ESC/POS commands and publish them to the MQTT topic.  Any connected ESP32 client subscribed to that topic will print the receipt.
+   The server will convert your task list into ESC/POS commands and publish them to the MQTT topic. Any compatible client subscribed to that topic can forward the payload to a printer.
 
-4. The `/health` endpoint returns the server’s status and whether it is connected to the MQTT broker.
+4. The `/health` endpoint returns the server's status, MQTT connection state, default topic, and renderer settings.
 
 ## Why MQTT?
 

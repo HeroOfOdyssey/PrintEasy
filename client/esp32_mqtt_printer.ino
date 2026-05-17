@@ -1,12 +1,13 @@
 /*
  * ESP32 MQTT Printer Bridge
  *
- * This firmware connects an ESP32 (e.g. WROOM‑32 or WROOM‑32U) to a Wi‑Fi network,
- * an MQTT broker and a Bluetooth thermal printer (Epson TM‑P60II in Classic SPP
- * mode).  It subscribes to a designated MQTT topic and forwards the incoming
- * payload as raw bytes to the printer.  The firmware automatically
- * reconnects if Wi‑Fi, MQTT or the Bluetooth link drops and periodically
- * sends a newline to the printer to prevent it from sleeping.
+ * This reference firmware connects an ESP32 (e.g. WROOM-32 or WROOM-32U) to
+ * Wi-Fi, an MQTT broker and a Bluetooth Classic SPP thermal printer. It
+ * subscribes to a designated MQTT topic and forwards each incoming payload as
+ * raw ESC/POS bytes. Other microcontrollers or computers can implement the
+ * same MQTT-to-printer bridge contract if they can receive binary MQTT payloads
+ * and write them to a printer transport such as Bluetooth SPP, USB, serial or
+ * TCP.
  */
 
 #include <WiFi.h>
@@ -31,6 +32,7 @@ const char* PRINTER_BT_NAME = "TM-P60II"; // Bluetooth device name of the Epson 
 // ==== Keep‑alive settings ====
 static const unsigned long BT_WAKE_INTERVAL = 60000; // send wake newline every 60 seconds
 static const unsigned long RECONNECT_INTERVAL = 5000; // retry connections every 5 seconds
+static const uint16_t MQTT_BUFFER_SIZE = 16384; // must fit the largest ESC/POS MQTT packet
 
 WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
@@ -117,6 +119,7 @@ void setup() {
   // Configure MQTT client
   mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
   mqttClient.setCallback(mqttCallback);
+  mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
 }
 
 void loop() {

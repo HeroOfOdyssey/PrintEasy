@@ -1,11 +1,13 @@
-# ESP32 MQTT Printer Client
+# ESP32 MQTT Printer Reference Client
 
-This Arduino sketch turns an ESP32 module into a wireless bridge between an MQTT broker and an Epson TM‑P60II thermal printer (or any ESC/POS printer that speaks Bluetooth Classic Serial Port Profile).  It subscribes to a topic containing raw ESC/POS data and forwards it to the printer.  The firmware automatically reconnects to Wi‑Fi, MQTT and Bluetooth if any link is lost and periodically wakes the printer to prevent it from sleeping.
+This Arduino sketch turns an ESP32 module into a wireless bridge between an MQTT broker and an Epson TM-P60II thermal printer, or another ESC/POS printer that speaks Bluetooth Classic Serial Port Profile. It subscribes to a topic containing raw ESC/POS bytes and forwards the payload to the printer.
+
+This is the included reference client for PrintEasy. The system itself is not limited to ESP32: any bridge that can subscribe to the MQTT topic, preserve binary payloads, and write raw bytes to a printer transport can be compatible.
 
 ## Prerequisites
 
-* **Hardware**: An ESP32 development board (e.g. ESP32‑WROOM‑32 or WROOM‑32U) and a compatible thermal printer.  This sketch assumes the printer exposes a Bluetooth SPP interface (common for mobile Epson printers).
-* **Software**: Arduino IDE or PlatformIO with the ESP32 board support installed.  You need the `PubSubClient` library installed (via Library Manager).  The built‑in `BluetoothSerial` library handles Bluetooth.
+* **Hardware**: An ESP32 development board (e.g. ESP32-WROOM-32 or WROOM-32U) and a compatible ESC/POS thermal printer. This sketch assumes the printer exposes a Bluetooth Classic SPP interface, which is common for mobile Epson printers.
+* **Software**: Arduino IDE or PlatformIO with ESP32 board support installed. Install the `PubSubClient` library via Library Manager. The built-in ESP32 `BluetoothSerial` library handles Bluetooth.
 
 ## Configuration
 
@@ -18,6 +20,7 @@ Open `esp32_mqtt_printer.ino` and edit the following constants at the top of the
 | `MQTT_USER`, `MQTT_PASS` | Broker credentials if required; leave as `nullptr` for anonymous access. |
 | `MQTT_TOPIC` | Topic to subscribe to for print jobs (must match the server’s setting). |
 | `PRINTER_BT_NAME` | The Bluetooth device name of your printer (as seen when pairing).  Alternatively, hard‑code the MAC address in the sketch and call `SerialBT.connect(uint8_t[6])`. |
+| `MQTT_BUFFER_SIZE` | MQTT receive buffer size. It must be larger than the largest ESC/POS packet sent by the server. The default sketch uses `16384`, which fits the default raster band size. |
 | `BT_WAKE_INTERVAL` | Milliseconds between sending a newline to the printer.  Prevents the printer from going into power‑save mode. |
 
 If your printer prompts for a pairing PIN, set `SerialBT.setPin("0000")` accordingly in `setup()`.
@@ -31,7 +34,9 @@ If your printer prompts for a pairing PIN, set `SerialBT.setPin("0000")` accordi
 
 ## MQTT topic format
 
-The firmware expects the MQTT payload to contain raw ESC/POS bytes.  The server component (`../server/app.js`) automatically generates such payloads from markdown or task lists using `receiptline`.  You can also publish arbitrary ESC/POS commands (e.g. images, QR codes) directly to the topic to test printing.
+The firmware expects the MQTT payload to contain raw ESC/POS bytes. The server component (`../server/app.js`) automatically generates such payloads from markdown, task lists, QR codes, and images. You can also publish trusted arbitrary ESC/POS commands directly to the topic to test printing.
+
+The payload is binary, not JSON. Any replacement client must avoid treating the message as a null-terminated string and must write exactly the received bytes to the printer transport.
 
 ## Handling disconnections
 
@@ -41,4 +46,15 @@ The firmware expects the MQTT payload to contain raw ESC/POS bytes.  The server 
 
 ## Extending functionality
 
-Because MQTT decouples the server and client, you can subscribe multiple printers to the same topic or use different topics per printer.  You can also implement acknowledgements by having the firmware publish a confirmation message to a separate topic when printing finishes.
+Because MQTT decouples the server and client, you can subscribe multiple printers to the same topic or use different topics per printer. You can also implement acknowledgements by having the firmware publish a confirmation message to a separate topic when printing finishes.
+
+## Porting beyond ESP32
+
+To build another client, keep the same contract:
+
+* Subscribe to the configured print topic.
+* Receive MQTT payloads as bytes.
+* Use a large enough MQTT packet buffer for raster jobs.
+* Forward the bytes unchanged to an ESC/POS printer over Bluetooth SPP, USB, serial, TCP, or another transport.
+
+For example, a Raspberry Pi or small Linux box could replace this sketch by subscribing with any MQTT library and writing the payload to `/dev/usb/lp0`, a serial device, or a network printer socket.

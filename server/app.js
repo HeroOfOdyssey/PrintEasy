@@ -10,6 +10,8 @@
 
 require('dotenv').config();
 
+process.env.XDG_CACHE_HOME = process.env.XDG_CACHE_HOME || '/tmp';
+
 const express = require('express');
 const mqtt = require('mqtt');
 const receiptline = require('receiptline');
@@ -17,6 +19,10 @@ const sharp = require('sharp');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '0.0.0.0';
+const SERVER_NAME = 'printeasy-mqtt-printer';
+const SERVER_VERSION = '1.0.0';
+const MCP_PROTOCOL_VERSION = '2025-06-18';
 
 // Environment variables
 const API_TOKEN = process.env.API_TOKEN || '';
@@ -35,6 +41,7 @@ const RASTER_FONT_FAMILY = process.env.RASTER_FONT_FAMILY || 'DejaVu Sans Mono, 
 const RASTER_FONT_SIZE = parseInt(process.env.RASTER_FONT_SIZE || '22', 10);
 const RASTER_LINE_HEIGHT = parseInt(process.env.RASTER_LINE_HEIGHT || '28', 10);
 const RASTER_MARGIN_X = parseInt(process.env.RASTER_MARGIN_X || '0', 10);
+const ALLOW_TOPIC_OVERRIDE = (process.env.ALLOW_TOPIC_OVERRIDE || 'false').toLowerCase() === 'true';
 
 // Configure Express to parse text and JSON bodies
 app.use(express.text({ type: ['text/*', 'application/octet-stream'], limit: '64kb' }));
@@ -47,12 +54,26 @@ function requireApiToken(req, res, next) {
   if (auth.startsWith('Bearer ')) {
     token = auth.slice(7);
   } else {
-    token = req.get('x-api-token');
+    token = req.get('x-api-token') || (req.query && req.query.token);
   }
   if (!API_TOKEN || token !== API_TOKEN) {
     return res.status(401).json({ ok: false, error: 'unauthorized' });
   }
   next();
+}
+
+function buildTaskMarkdown(tasks) {
+  const lines = [];
+  lines.push('^^^TASK LIST');
+  lines.push('');
+  const now = new Date();
+  lines.push(now.toLocaleDateString('en-US', { timeZone: process.env.TZ || 'UTC' }));
+  lines.push('');
+  tasks.forEach((task) => {
+    lines.push('- ' + String(task));
+  });
+  lines.push('');
+  return lines.join('\n');
 }
 
 // Connect to MQTT broker
@@ -93,17 +114,7 @@ function normalisePayload(req) {
   }
   // If the body contains a list of tasks
   if (req.body && Array.isArray(req.body.tasks)) {
-    const lines = [];
-    lines.push('^^^TASK LIST');
-    lines.push('');
-    const now = new Date();
-    lines.push(now.toLocaleDateString('en-US', { timeZone: process.env.TZ || 'UTC' }));
-    lines.push('');
-    req.body.tasks.forEach((task) => {
-      lines.push('- ' + String(task));
-    });
-    lines.push('');
-    return lines.join('\n');
+    return buildTaskMarkdown(req.body.tasks);
   }
   // If no tasks or markdown but QR or image fields exist, return an empty string
   if (req.body && (typeof req.body.qr === 'string' || typeof req.body.image === 'string')) {
@@ -402,18 +413,96 @@ async function composePrintJob({ markdown = '', qr, image }) {
   return Buffer.concat(buffers.filter(b => b && b.length));
 }
 
+function resolvePublishTopic(args = {}) {
+  if (typeof args.topic !== 'string' || !args.topic.trim()) {
+    return MQTT_TOPIC;
+  }
+  if (!ALLOW_TOPIC_OVERRIDE) {
+    throw new Error('Topic override is disabled. Set ALLOW_TOPIC_OVERRIDE=true to allow per-request topics.');
+  }
+  return args.topic.trim();
+}
+
+function publishEscPos(escpos, topic = MQTT_TOPIC) {
+  if (!mqttConnected) {
+    throw new Error('MQTT broker not connected');
+  }
+  return new Promise((resolve, reject) => {
+    mqttClient.publish(topic, escpos, { qos: 1 }, (err) => {
+      if (err) reject(err); else resolve();
+    });
+  });
+}
+
+function markdownFromToolArgs(args = {}) {
+  if (Array.isArray(args.tasks)) {
+    return buildTaskMarkdown(args.tasks);
+  }
+  if (typeof args.markdown === 'string') {
+    return args.markdown;
+  }
+  if (typeof args.text === 'string') {
+    return args.text;
+  }
+  if (typeof args.qr === 'string' || typeof args.image === 'string') {
+    return '';
+  }
+  throw new Error('Provide tasks, markdown, text, qr, or image.');
+}
+
+function toolText(text) {
+  return [{ type: 'text', text }];
+}
+
+function mcpToolResult(text, structuredContent = {}, isError = false) {
+  return {
+    content: toolText(text),
+    structuredContent,
+    isError,
+  };
+}
+
+function encodePreview(escpos, args = {}) {
+  const maxBytes = Math.max(0, Math.min(parseInt(args.maxBytes || '4096', 10), escpos.length));
+  const preview = escpos.subarray(0, maxBytes);
+  const result = {
+    bytes: escpos.length,
+    returnedBytes: preview.length,
+    truncated: preview.length < escpos.length,
+    mode: RASTER_MARKDOWN ? 'raster' : 'receiptline',
+    widthDots: PRINTER_DOTS,
+  };
+  if (args.includeHex) {
+    result.hex = preview.toString('hex');
+  }
+  if (args.includeBase64) {
+    result.base64 = preview.toString('base64');
+  }
+  return result;
+}
+
+function decodeRawEscPos(args = {}) {
+  if (typeof args.data !== 'string' || !args.data.trim()) {
+    throw new Error('Raw ESC/POS data is required.');
+  }
+  const encoding = args.encoding || 'base64';
+  if (encoding === 'base64') {
+    return Buffer.from(args.data, 'base64');
+  }
+  if (encoding === 'hex') {
+    return Buffer.from(args.data.replace(/\s+/g, ''), 'hex');
+  }
+  throw new Error('encoding must be "base64" or "hex".');
+}
+
 // -----------------------------------------------------------------------------
 // MCP / SSE support
 //
 // The Model Context Protocol (MCP) allows AI assistants to discover and call
-// external tools.  For convenience, this server exposes a minimal MCP
-// implementation using JSON‑RPC 2.0 over HTTP and optional Server‑Sent Events
-// (SSE).  Clients can query available tools via a JSON‑RPC request to
-// `/mcp` with method `tools/list`, invoke the print tool with `tools/call`, or
-// open a persistent SSE connection at `/mcp/sse` to receive asynchronous
-// notifications of completed invocations.  This implementation is deliberately
-// simple and does not implement the full MCP spec.  It exists to make the
-// printer available to basic MCP‑compatible clients.
+// external tools.  For convenience, this server exposes an MCP-compatible
+// implementation using JSON-RPC 2.0 over HTTP and optional Server-Sent Events
+// (SSE). Clients can initialize the MCP session, list tools, call tools, and
+// subscribe to result notifications over `/mcp/sse`.
 
 // Define the tool metadata for MCP.  Tools are objects with a name,
 // description and JSON Schema describing the accepted arguments.  Clients
@@ -421,35 +510,133 @@ async function composePrintJob({ markdown = '', qr, image }) {
 const mcpTools = [
   {
     name: 'printReceipt',
-    description: 'Print tasks, markdown, QR codes or images via MQTT.',
-    parameters: {
+    title: 'Print Receipt',
+    description: 'Render tasks, text/markdown, QR codes, or images as ESC/POS and publish the job to MQTT.',
+    inputSchema: {
       type: 'object',
       properties: {
         tasks: {
           type: 'array',
-          description: 'An array of strings to print as bullet points',
+          description: 'Strings to print as a dated task list.',
           items: { type: 'string' },
+        },
+        text: {
+          type: 'string',
+          description: 'Plain text to print. Treated as markdown by the renderer.',
         },
         markdown: {
           type: 'string',
-          description: 'Raw markdown text to print',
+          description: 'Markdown text to print. Supports headings, lists, checkboxes, simple tables, and qr/image fenced blocks.',
         },
         qr: {
           type: 'string',
-          description: 'Data to encode into a QR Code printed on the receipt',
+          description: 'Data to encode as a native ESC/POS QR code.',
         },
         image: {
           type: 'string',
-          description: 'Base64‑encoded image (PNG/JPEG) to print on the receipt',
+          description: 'Base64-encoded PNG/JPEG, optionally as a data URL, to rasterize and print.',
+        },
+        topic: {
+          type: 'string',
+          description: 'Optional MQTT topic override. Requires ALLOW_TOPIC_OVERRIDE=true.',
         },
       },
-      // Require at least one content field
       anyOf: [
         { required: ['tasks'] },
+        { required: ['text'] },
         { required: ['markdown'] },
         { required: ['qr'] },
         { required: ['image'] },
       ],
+    },
+    annotations: {
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  },
+  {
+    name: 'previewReceipt',
+    title: 'Preview Receipt',
+    description: 'Render a receipt job and return metadata plus optional ESC/POS hex/base64 without publishing to MQTT.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tasks: {
+          type: 'array',
+          description: 'Strings to render as a dated task list.',
+          items: { type: 'string' },
+        },
+        text: { type: 'string', description: 'Plain text to render.' },
+        markdown: { type: 'string', description: 'Markdown text to render.' },
+        qr: { type: 'string', description: 'Data to encode as a QR code.' },
+        image: { type: 'string', description: 'Base64-encoded PNG/JPEG, optionally as a data URL.' },
+        includeHex: { type: 'boolean', description: 'Include a hex preview of the rendered bytes.' },
+        includeBase64: { type: 'boolean', description: 'Include a base64 preview of the rendered bytes.' },
+        maxBytes: {
+          type: 'integer',
+          minimum: 0,
+          maximum: 65536,
+          description: 'Maximum number of rendered bytes to include in hex/base64 previews.',
+        },
+      },
+      anyOf: [
+        { required: ['tasks'] },
+        { required: ['text'] },
+        { required: ['markdown'] },
+        { required: ['qr'] },
+        { required: ['image'] },
+      ],
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: 'publishEscPos',
+    title: 'Publish Raw ESC/POS',
+    description: 'Publish prebuilt ESC/POS bytes to the configured MQTT print topic.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        data: {
+          type: 'string',
+          description: 'Raw ESC/POS bytes encoded as base64 or hex.',
+        },
+        encoding: {
+          type: 'string',
+          enum: ['base64', 'hex'],
+          default: 'base64',
+        },
+        topic: {
+          type: 'string',
+          description: 'Optional MQTT topic override. Requires ALLOW_TOPIC_OVERRIDE=true.',
+        },
+      },
+      required: ['data'],
+    },
+    annotations: {
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  },
+  {
+    name: 'getPrinterStatus',
+    title: 'Get Printer Status',
+    description: 'Return server, MQTT, topic, and renderer configuration status.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
     },
   },
 ];
@@ -462,7 +649,7 @@ const sseClients = new Set();
 // (`/mcp/sse`) to receive tool definitions and invocation results.  This
 // endpoint sends an initial `tools` event containing the list of available
 // tools, then keeps the connection open for subsequent events.
-app.get('/mcp/sse', (req, res) => {
+app.get('/mcp/sse', requireApiToken, (req, res) => {
   // Only allow text/event-stream connections
   const accept = req.get('accept') || '';
   if (!accept.includes('text/event-stream')) {
@@ -474,7 +661,7 @@ app.get('/mcp/sse', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
   // Send the current tool list immediately
-  const toolsPayload = { jsonrpc: '2.0', id: null, result: { tools: mcpTools } };
+  const toolsPayload = { jsonrpc: '2.0', method: 'notifications/tools/list_changed' };
   res.write(`event: tools\n`);
   res.write(`data: ${JSON.stringify(toolsPayload)}\n\n`);
   // Add to client list
@@ -500,85 +687,156 @@ function broadcastMcpResult(message) {
   }
 }
 
-// MCP JSON‑RPC endpoint.  Handles discovery (`tools/list`) and invocation
-// (`tools/call`).  The request body should be a JSON object with
-// jsonrpc: '2.0', id, method and params.  Tool invocation publishes a job
-// directly to MQTT.  The server returns a JSON‑RPC response and also
-// broadcasts the result to SSE clients.
-app.post('/mcp', express.json({ limit: '64kb' }), async (req, res) => {
-  const { jsonrpc, id, method, params } = req.body || {};
-  if (jsonrpc !== '2.0' || typeof method !== 'string') {
-    return res.status(400).json({ jsonrpc: '2.0', id, error: { code: -32600, message: 'Invalid Request' } });
-  }
-  // Handle tools/list
-  if (method === 'tools/list') {
-    const result = { tools: mcpTools };
-    const response = { jsonrpc: '2.0', id, result };
-    return res.json(response);
-  }
-  // Handle tools/call
-  if (method === 'tools/call') {
-    try {
-      const { name, arguments: args } = params || {};
-      if (name !== 'printReceipt') {
-        throw new Error('Tool not found');
-      }
-      // Build markdown if tasks or markdown are provided; allow empty if only qr/image
-      let markdown = '';
-      if (args && Array.isArray(args.tasks)) {
-        const lines = [];
-        lines.push('^^^TASK LIST');
-        lines.push('');
-        const now = new Date();
-        lines.push(now.toLocaleDateString('en-US', { timeZone: process.env.TZ || 'UTC' }));
-        lines.push('');
-        args.tasks.forEach((t) => lines.push('- ' + String(t)));
-        lines.push('');
-        markdown = lines.join('\n');
-      } else if (args && typeof args.markdown === 'string') {
-        markdown = args.markdown;
-      } else if (!(args && (typeof args.qr === 'string' || typeof args.image === 'string'))) {
-        // Only allow missing markdown/tasks if qr or image is present
-        throw new Error('Invalid arguments');
-      }
-      const escpos = await composePrintJob({ markdown, qr: args && args.qr, image: args && args.image });
-      if (!mqttConnected) {
-        throw new Error('MQTT broker not connected');
-      }
-      await new Promise((resolve, reject) => {
-        mqttClient.publish(MQTT_TOPIC, escpos, { qos: 1 }, (err) => {
-          if (err) reject(err); else resolve();
-        });
-      });
-      const result = { status: 'ok', bytes: escpos.length };
-      const response = { jsonrpc: '2.0', id, result };
-      // Send response to HTTP client
-      res.json(response);
-      // Also broadcast to SSE clients
-      broadcastMcpResult(response);
-    } catch (error) {
-      const errResp = { jsonrpc: '2.0', id, error: { code: -32000, message: error.message || 'Internal error' } };
-      res.json(errResp);
-    }
-    return;
-  }
-  // Unknown method
-  return res.status(400).json({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Method not found' } });
-});
+function jsonRpcError(id, code, message) {
+  return { jsonrpc: '2.0', id, error: { code, message } };
+}
 
-
-// Health endpoint
-app.get('/health', (req, res) => {
-  res.json({
+function printerStatus() {
+  return {
     ok: true,
     mqtt: mqttConnected,
+    topic: MQTT_TOPIC,
+    topicOverrideAllowed: ALLOW_TOPIC_OVERRIDE,
     renderer: {
       mode: RASTER_MARKDOWN ? 'raster' : 'receiptline',
       widthDots: PRINTER_DOTS,
       bandHeight: RASTER_BAND_HEIGHT,
       threshold: RASTER_THRESHOLD,
+      fontFamily: RASTER_FONT_FAMILY,
+      fontSize: RASTER_FONT_SIZE,
+      lineHeight: RASTER_LINE_HEIGHT,
+      marginX: RASTER_MARGIN_X,
     },
-  });
+  };
+}
+
+async function callMcpTool(name, args = {}) {
+  if (name === 'printReceipt') {
+    const markdown = markdownFromToolArgs(args);
+    const escpos = await composePrintJob({ markdown, qr: args.qr, image: args.image });
+    const topic = resolvePublishTopic(args);
+    await publishEscPos(escpos, topic);
+    const structuredContent = {
+      ok: true,
+      bytes: escpos.length,
+      topic,
+      mode: RASTER_MARKDOWN ? 'raster' : 'receiptline',
+      widthDots: PRINTER_DOTS,
+    };
+    return mcpToolResult(`Published ${escpos.length} ESC/POS bytes to MQTT topic "${topic}".`, structuredContent);
+  }
+
+  if (name === 'previewReceipt') {
+    const markdown = markdownFromToolArgs(args);
+    const escpos = await composePrintJob({ markdown, qr: args.qr, image: args.image });
+    const structuredContent = encodePreview(escpos, args);
+    const suffix = structuredContent.truncated ? ` Preview truncated to ${structuredContent.returnedBytes} bytes.` : '';
+    return mcpToolResult(`Rendered ${escpos.length} ESC/POS bytes without publishing.${suffix}`, structuredContent);
+  }
+
+  if (name === 'publishEscPos') {
+    const escpos = decodeRawEscPos(args);
+    if (!escpos.length) {
+      throw new Error('Decoded ESC/POS payload is empty.');
+    }
+    const topic = resolvePublishTopic(args);
+    await publishEscPos(escpos, topic);
+    return mcpToolResult(`Published ${escpos.length} raw ESC/POS bytes to MQTT topic "${topic}".`, {
+      ok: true,
+      bytes: escpos.length,
+      topic,
+    });
+  }
+
+  if (name === 'getPrinterStatus') {
+    const status = printerStatus();
+    return mcpToolResult(`MQTT connected: ${status.mqtt}. Default topic: ${status.topic}.`, status);
+  }
+
+  throw new Error(`Tool not found: ${name}`);
+}
+
+async function handleMcpRequest(message) {
+  const { jsonrpc, id, method, params } = message || {};
+  if (jsonrpc !== '2.0' || typeof method !== 'string') {
+    return jsonRpcError(id === undefined ? null : id, -32600, 'Invalid Request');
+  }
+  if (id === undefined && method.startsWith('notifications/')) {
+    return null;
+  }
+
+  if (method === 'initialize') {
+    return {
+      jsonrpc: '2.0',
+      id,
+      result: {
+        protocolVersion: (params && params.protocolVersion) || MCP_PROTOCOL_VERSION,
+        capabilities: {
+          tools: {
+            listChanged: false,
+          },
+        },
+        serverInfo: {
+          name: SERVER_NAME,
+          version: SERVER_VERSION,
+        },
+        instructions: 'Use printReceipt for normal print jobs, previewReceipt to inspect generated ESC/POS, publishEscPos for trusted raw ESC/POS bytes, and getPrinterStatus for health/configuration.',
+      },
+    };
+  }
+
+  if (method === 'ping') {
+    return { jsonrpc: '2.0', id, result: {} };
+  }
+
+  if (method === 'tools/list') {
+    return { jsonrpc: '2.0', id, result: { tools: mcpTools } };
+  }
+
+  if (method === 'tools/call') {
+    try {
+      const { name, arguments: args } = params || {};
+      if (typeof name !== 'string') {
+        return jsonRpcError(id, -32602, 'Tool name is required.');
+      }
+      const result = await callMcpTool(name, args || {});
+      const response = { jsonrpc: '2.0', id, result };
+      broadcastMcpResult(response);
+      return response;
+    } catch (error) {
+      return {
+        jsonrpc: '2.0',
+        id,
+        result: mcpToolResult(error.message || 'Tool call failed.', { ok: false, error: error.message || 'Tool call failed.' }, true),
+      };
+    }
+  }
+
+  return jsonRpcError(id, -32601, 'Method not found');
+}
+
+// MCP JSON‑RPC endpoint.  Handles discovery (`tools/list`) and invocation
+// (`tools/call`).  The request body should be a JSON object with
+// jsonrpc: '2.0', id, method and params.  Tool invocation publishes a job
+// directly to MQTT.  The server returns a JSON‑RPC response and also
+// broadcasts the result to SSE clients.
+app.post('/mcp', requireApiToken, async (req, res) => {
+  const payload = req.body;
+  if (Array.isArray(payload)) {
+    if (!payload.length) {
+      return res.status(400).json(jsonRpcError(null, -32600, 'Invalid Request'));
+    }
+    const responses = (await Promise.all(payload.map(handleMcpRequest))).filter(Boolean);
+    return responses.length ? res.json(responses) : res.status(204).end();
+  }
+  const response = await handleMcpRequest(payload);
+  return response ? res.json(response) : res.status(204).end();
+});
+
+
+// Health endpoint
+app.get('/health', (req, res) => {
+  res.json(printerStatus());
 });
 
 // Print endpoint
@@ -594,18 +852,11 @@ app.post('/print', requireApiToken, async (req, res) => {
       qr: req.body && req.body.qr,
       image: req.body && req.body.image,
     });
-    if (!mqttConnected) {
-      return res.status(503).json({ ok: false, error: 'MQTT broker not connected' });
-    }
-    mqttClient.publish(MQTT_TOPIC, escpos, { qos: 1 }, (err) => {
-      if (err) {
-        console.error('[MQTT] publish error:', err.message);
-        return res.status(500).json({ ok: false, error: 'failed to publish to MQTT' });
-      }
-      res.json({ ok: true, bytes: escpos.length, mode: RASTER_MARKDOWN ? 'raster' : 'receiptline', widthDots: PRINTER_DOTS });
-    });
+    await publishEscPos(escpos, MQTT_TOPIC);
+    res.json({ ok: true, bytes: escpos.length, topic: MQTT_TOPIC, mode: RASTER_MARKDOWN ? 'raster' : 'receiptline', widthDots: PRINTER_DOTS });
   } catch (err) {
-    res.status(400).json({ ok: false, error: err.message });
+    const status = err.message === 'MQTT broker not connected' ? 503 : 400;
+    res.status(status).json({ ok: false, error: err.message });
   }
 });
 
@@ -624,6 +875,16 @@ app.post('/preview', requireApiToken, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT}`);
-});
+if (require.main === module) {
+  app.listen(PORT, HOST, () => {
+    console.log(`Server listening on ${HOST}:${PORT}`);
+  });
+}
+
+module.exports = {
+  app,
+  composePrintJob,
+  handleMcpRequest,
+  mcpTools,
+  printerStatus,
+};

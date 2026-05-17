@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # Mosquitto broker for message passing
   mqtt-broker:
@@ -8,10 +6,9 @@ services:
     ports:
       - "1883:1883"
     volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
       - mosquitto-data:/mosquitto/data
       - mosquitto-log:/mosquitto/log
-    environment:
-      - MOSQUITTO_ALLOW_ANONYMOUS=true
 
   # Node.js API server that publishes print jobs to MQTT
   mqtt-server:
@@ -20,12 +17,13 @@ services:
     depends_on:
       - mqtt-broker
     env_file:
-      - ./server/.env
+      - path: ./server/.env
+        required: false
     ports:
-      - "3000:3000"
+      - "${HTTP_PORT:-3000}:3000"
     # Ensure the server waits until the broker is up
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3

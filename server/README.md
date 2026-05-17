@@ -1,16 +1,29 @@
 # MQTT Printer Server
 
-This Node.js service provides a REST API for turning lists of tasks, markdown, QR codes, and images into ESC/POS commands and publishing them to an MQTT broker. It is designed to work with the ESP32 firmware in `../client`, which listens on the same MQTT topic and forwards the data to a thermal printer.
+This Node.js service provides REST and MCP interfaces for turning lists of tasks, markdown, QR codes, images, and trusted raw ESC/POS into printer-ready MQTT messages. The included ESP32 firmware in `../client` listens on the same topic and forwards the data to a Bluetooth SPP thermal printer, but any binary-safe MQTT client can implement the same bridge contract.
 
 By default, markdown is rendered server-side into a fixed-width 1-bit raster image. For your 2-1/4 inch rolls, this is set to the TM-P60II’s 58 mm printable mode: **420 dots wide**. Epson’s TM-P60II guide lists 203 × 203 dpi density and 420-dot / 52.5 mm print width for 58 mm paper, while 60 mm mode is 432 dots / 54 mm.
 
 ## Features
 
-* **POST `/print`** – Accepts plain text, markdown, or a JSON payload like `{ "tasks": ["Task 1", "Task 2"], "qr": "https://example.com", "image": "data:image/png;base64,…" }`.  Converts the input into ESC/POS bytes via [`receiptline`](https://github.com/receiptline/receiptline).  If a `qr` field is provided, the string is encoded into a QR Code using the printer’s native ESC/POS commands.  If an `image` field is provided, the base64‑encoded PNG/JPEG is resized and rasterised into a monochrome bitmap and wrapped in the `GS v 0` command.  The resulting byte sequence is published to the configured MQTT topic.  Requires an API token for authentication.
-* **POST `/preview`** – Same as `/print`, but returns a hex string of the generated ESC/POS bytes instead of publishing.  Useful for debugging and verifying the output before sending it to a printer.
-* **GET `/health`** – Returns `{ ok: true, mqtt: <boolean> }` indicating whether the server is connected to the MQTT broker.
-* **POST `/mcp`** – Minimal [Model Context Protocol](https://modelcontextprotocol.com/) endpoint supporting JSON‑RPC 2.0.  Clients can call `tools/list` to discover available tools (currently just `printReceipt`) and `tools/call` to invoke the receipt printer.  The `printReceipt` tool accepts the same arguments as the REST API: you can provide `tasks`, `markdown`, `qr` and/or `image` fields and the server will assemble the ESC/POS bytes and publish them to MQTT.
-* **GET `/mcp/sse`** – Server‑Sent Events (SSE) stream for asynchronous MCP results.  Clients can open an `EventSource` to this endpoint to receive tool definitions and real‑time notifications when `tools/call` invocations complete.  This is useful for assistants that need streaming tool discovery and callback events.
+* **POST `/print`** - Accepts plain text, markdown, or a JSON payload like `{ "tasks": ["Task 1", "Task 2"], "qr": "https://example.com", "image": "data:image/png;base64,..." }`. Converts the input into ESC/POS bytes and publishes to MQTT. Requires an API token.
+* **POST `/preview`** - Same input as `/print`, but returns a hex string of the generated ESC/POS bytes instead of publishing. Useful for debugging before sending a job to a printer.
+* **GET `/health`** - Returns server status, MQTT connection state, default topic, whether per-request topics are enabled, and renderer settings.
+* **POST `/mcp`** - JSON-RPC MCP endpoint. Supports `initialize`, `ping`, `tools/list`, and `tools/call`. Requires the same API token as `/print`.
+* **GET `/mcp/sse`** - Server-Sent Events stream for MCP tool-result notifications. EventSource clients can pass the token as `?token=<API_TOKEN>`; clients that support headers should prefer `Authorization: Bearer <API_TOKEN>`.
+
+## MCP tools
+
+The MCP endpoint exposes four tools:
+
+| Tool | Purpose |
+|---|---|
+| `printReceipt` | Renders `tasks`, `text`, `markdown`, `qr`, and/or `image` into ESC/POS and publishes it to MQTT. |
+| `previewReceipt` | Renders the job without publishing and returns byte counts plus optional hex/base64 previews. |
+| `publishEscPos` | Publishes trusted raw ESC/POS bytes supplied as base64 or hex. |
+| `getPrinterStatus` | Returns MQTT and renderer status/configuration. |
+
+MCP tool definitions use `inputSchema` and tool calls return MCP-style `content`, `structuredContent`, and `isError` fields.
 
 ## Configuration
 
@@ -19,9 +32,11 @@ The service reads configuration values from environment variables.  Copy `.env.e
 | Variable | Description |
 |---|---|
 | `API_TOKEN` | Secret token for authenticating API requests.  Clients must include `Authorization: Bearer <API_TOKEN>` or `X-API-Token: <API_TOKEN>` in the request. |
+| `HOST` | Host address for the HTTP server to bind. Defaults to `0.0.0.0` for container use. Use `127.0.0.1` for local-only development. |
 | `MQTT_URL` | Connection string for the MQTT broker (e.g. `mqtt://localhost:1883` or `mqtts://broker.example.com:8883`). |
 | `MQTT_USER` / `MQTT_PASS` | Credentials for the MQTT broker if authentication is required. |
 | `MQTT_TOPIC` | Topic to which print jobs are published.  Clients should subscribe to this exact topic. |
+| `ALLOW_TOPIC_OVERRIDE` | When `true`, MCP requests may publish to a `topic` argument instead of only `MQTT_TOPIC`. Defaults to `false`. |
 | `PRINTER_CPL` | Characters per line for receipt formatting.  Defaults to 42 for 58 mm paper. |
 | `PRINTER_COMMAND` | Command set for receiptline to generate (default `escpos`). |
 | `PRINTER_ENCODING` | Character encoding (default `multilingual`). |
@@ -91,13 +106,44 @@ Normal markdown, headings, bullets, numbered lists, GitHub-style checkboxes, hor
      --data-raw '{"markdown":"# Today\n\n- [ ] Pack printer\n- [x] Test QR\n\n```qr\nhttps://example.com\n```"}'
    ```
 
-   Ensure an MQTT broker is running and reachable at `MQTT_URL`, and that your ESP32 firmware is subscribed to `MQTT_TOPIC`.
+   Ensure an MQTT broker is running and reachable at `MQTT_URL`, and that at least one bridge client is subscribed to `MQTT_TOPIC`.
+
+3. MCP example:
+
+   ```sh
+   curl -X POST http://localhost:3000/mcp \
+     -H "Authorization: Bearer <API_TOKEN>" \
+     -H "Content-Type: application/json" \
+     --data-raw '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+   ```
+
+   Preview a job without publishing:
+
+   ```sh
+   curl -X POST http://localhost:3000/mcp \
+     -H "Authorization: Bearer <API_TOKEN>" \
+     -H "Content-Type: application/json" \
+     --data-raw '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"previewReceipt","arguments":{"markdown":"# Test\n\n- [ ] Print from MCP","includeHex":true,"maxBytes":64}}}'
+   ```
 
 ## Docker usage
 
-The provided `Dockerfile` builds a lightweight container using `node:18-alpine`.  To run the server via Docker Compose alongside an MQTT broker, see the root‑level [`docker-compose.yml`](../docker-compose.yml).  Adjust the broker URL in `server/.env` to `mqtt://mqtt-broker:1883` to reference the broker service defined in the compose file.
+The provided `Dockerfile` builds a lightweight container using `node:18-alpine`, fontconfig, and DejaVu fonts for predictable SVG-to-raster output. To run the server via Docker Compose alongside an MQTT broker, see the root-level [`docker-compose.yml`](../docker-compose.yml). Adjust the broker URL in `server/.env` to `mqtt://mqtt-broker:1883` to reference the broker service defined in the compose file.
+
+Compose publishes the container's port `3000` to host port `3000` by default. If that host port is busy, run `HTTP_PORT=3002 docker compose up` from the repository root.
+
+## Client compatibility
+
+The server does not require ESP32 specifically. It publishes binary ESC/POS payloads over MQTT. A compatible client needs to:
+
+* Subscribe to `MQTT_TOPIC`.
+* Preserve the MQTT payload as raw bytes.
+* Use a packet/buffer size large enough for raster bands.
+* Write those bytes to a printer transport such as Bluetooth SPP, USB, serial, or TCP.
+* Target a printer that understands the generated command set, currently ESC/POS by default.
 
 ## Security
 
-* **Authentication** – The API requires a bearer token for all mutating endpoints.  Set `API_TOKEN` to a strong random value and do not commit your `.env` file to version control.
-* **TLS** – For production deployments, run the broker with TLS (e.g. `mqtts://broker.example.com:8883`) and use secure credentials.  Consider placing this server behind a reverse proxy (nginx, Caddy) to terminate HTTPS for the REST API.
+* **Authentication** - The REST print/preview endpoints and MCP endpoint require the API token. Set `API_TOKEN` to a strong random value and do not commit your `.env` file.
+* **Raw ESC/POS** - `publishEscPos` is intentionally powerful. Only expose MCP to trusted operators.
+* **TLS** - For production deployments, run the broker with TLS (e.g. `mqtts://broker.example.com:8883`) and use secure credentials. Consider placing this server behind a reverse proxy such as Caddy, nginx, or Traefik to terminate HTTPS for REST/MCP traffic.
