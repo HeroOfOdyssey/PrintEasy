@@ -1,0 +1,18 @@
+[Unit]
+Description=PrintEasy Linux MQTT printer bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/printeasy/client.env
+WorkingDirectory=/opt/printeasy/clients/linux-python
+ExecStart=/opt/printeasy/clients/linux-python/.venv/bin/python /opt/printeasy/clients/linux-python/printeasy_client.py
+Restart=always
+RestartSec=5
+User=printeasy
+Group=printeasy
+SupplementaryGroups=dialout lp bluetooth
+
+[Install]
+WantedBy=multi-user.target

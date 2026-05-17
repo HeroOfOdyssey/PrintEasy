@@ -1,6 +1,6 @@
 # MQTT Printer Server
 
-This Node.js service provides REST and MCP interfaces for turning lists of tasks, markdown, QR codes, images, and trusted raw ESC/POS into printer-ready MQTT messages. The included ESP32 firmware in `../client` listens on the same topic and forwards the data to a Bluetooth SPP thermal printer, but any binary-safe MQTT client can implement the same bridge contract.
+This Node.js service provides REST and MCP interfaces for turning lists of tasks, markdown, QR codes, images, and trusted raw ESC/POS into printer-ready MQTT messages. Clients under `../clients` listen on the same topic and forward the data to printers over transports such as serial, raw USB, and Bluetooth SPP/RFCOMM.
 
 By default, markdown is rendered server-side into a fixed-width 1-bit raster image. For your 2-1/4 inch rolls, this is set to the TM-P60II’s 58 mm printable mode: **420 dots wide**. Epson’s TM-P60II guide lists 203 × 203 dpi density and 420-dot / 52.5 mm print width for 58 mm paper, while 60 mm mode is 432 dots / 54 mm.
 
