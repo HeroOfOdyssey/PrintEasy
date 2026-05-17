@@ -1,8 +1,8 @@
 # PrintEasy
 
-PrintEasy is an end-to-end MQTT bridge for sending custom receipt print jobs from a server/operator to a printer-connected device on your local network. The server renders tasks, markdown, QR codes, images, or raw ESC/POS into printer-ready bytes and publishes them to MQTT. Any client that subscribes to the print topic and forwards the binary payload to a compatible printer can be used.
+PrintEasy is an end-to-end MQTT bridge for sending custom receipt print jobs from an operator server to printer-connected devices on your local network. The server renders tasks, markdown, QR codes, images, or raw ESC/POS into printer-ready bytes and publishes them to MQTT. Any client that subscribes to the print topic and forwards the binary payload to a compatible printer can be used.
 
-The included clients now cover Linux/Raspberry Pi, ESP32, and starter microcontroller targets. ESP32 remains the Bluetooth Classic SPP reference for printers such as the Epson TM-P60II, but it is not the protocol limit.
+The included clients cover Linux/Raspberry Pi, ESP32, and serial-first microcontroller targets. ESP32 is a practical fit for Bluetooth Classic SPP printers such as the Epson TM-P60II, but the protocol is not tied to ESP32.
 
 ## Overview
 
@@ -11,7 +11,7 @@ The system consists of two major components:
 1. **Server (`./server`)** - A Node.js service that exposes HTTP and MCP interfaces for creating print jobs. It converts markdown or task lists into ESC/POS commands using [`receiptline`](https://github.com/receiptline/receiptline), rasterizes markdown/images with `sharp`, generates native ESC/POS QR codes, and publishes the resulting binary payload to an MQTT topic.
    The MCP endpoint supports `initialize`, `ping`, `tools/list`, and `tools/call` with tools for printing, previewing, publishing trusted raw ESC/POS, and checking status.
 
-2. **Clients (`./clients`)** - Device bridges that subscribe to the MQTT print topic and forward raw ESC/POS bytes to a printer. The Linux/Raspberry Pi client supports serial, raw USB, and Bluetooth RFCOMM. The ESP32 Arduino client supports Bluetooth Classic SPP. ESP8266 and Pico W/Pico 2 W starter clients document serial-first microcontroller paths.
+2. **Clients (`./clients`)** - Device bridges that subscribe to the MQTT print topic and forward raw ESC/POS bytes to a printer. The Linux/Raspberry Pi client supports serial, raw USB, and Bluetooth RFCOMM. The ESP32 Arduino client supports Bluetooth Classic SPP. ESP8266 and Pico W/Pico 2 W clients provide serial-first microcontroller paths.
 
 MQTT's lightweight publish/subscribe model keeps the device side simple: subscribe to a topic, receive binary ESC/POS payloads, write them to the printer transport.
 
@@ -36,10 +36,10 @@ For non-ESP32 clients, the important requirements are binary-safe MQTT payload h
 
 | Client | Status | Best for | Printer transports |
 |---|---|---|---|
-| [`clients/linux-python`](clients/linux-python/) | Working core | Raspberry Pi and Linux devices | Serial, raw USB, Bluetooth RFCOMM |
-| [`clients/esp32-arduino`](clients/esp32-arduino/) | Working reference | Compact Bluetooth printer bridge | Bluetooth Classic SPP |
-| [`clients/esp8266-arduino`](clients/esp8266-arduino/) | Starter | Low-cost Wi-Fi serial bridge | UART / SoftwareSerial |
-| [`clients/pico-w`](clients/pico-w/) | Starter docs | Pico W / Pico 2 W serial bridge | UART serial |
+| [`clients/linux-python`](clients/linux-python/) | Supported | Raspberry Pi and Linux devices | Serial, raw USB, Bluetooth RFCOMM |
+| [`clients/esp32-arduino`](clients/esp32-arduino/) | Supported | Compact Bluetooth printer bridge | Bluetooth Classic SPP |
+| [`clients/esp8266-arduino`](clients/esp8266-arduino/) | Hardware-adaptable | Low-cost Wi-Fi serial bridge | UART / SoftwareSerial |
+| [`clients/pico-w`](clients/pico-w/) | Design guide | Pico W / Pico 2 W serial bridge | UART serial |
 | [`clients/protocol`](clients/protocol/) | Shared contract | All clients | MQTT binary ESC/POS |
 
 For Raspberry Pi, use `clients/linux-python/`. Raspberry Pi is treated as a Linux target because Raspberry Pi OS exposes serial devices, raw USB printer devices, and Bluetooth RFCOMM through standard Linux interfaces.
@@ -55,8 +55,8 @@ mqtt_printer_bridge
 │   ├── protocol               – Shared MQTT binary payload contract
 │   ├── linux-python           – Raspberry Pi / Linux Python bridge
 │   ├── esp32-arduino          – ESP32 Bluetooth SPP bridge
-│   ├── esp8266-arduino        – ESP8266 serial bridge starter
-│   └── pico-w                 – Pico W / Pico 2 W serial bridge starter
+│   ├── esp8266-arduino        – ESP8266 serial bridge
+│   └── pico-w                 – Pico W / Pico 2 W serial bridge guide
 ├── mosquitto
 │   └── mosquitto.conf         – Local broker config for Docker Compose
 ├── server
@@ -102,7 +102,7 @@ curl -X POST http://localhost:3000/print \
 
 ## Why MQTT?
 
-The original implementation used WebSockets and a custom protocol.  That works for a handful of clients, but it becomes fragile on resource‑constrained hardware.  The ESP32 can handle Wi‑Fi and Bluetooth simultaneously, but memory is limited and TLS handshakes are expensive.  Switching to MQTT removes the need for long‑running secure WebSocket sessions and polling.  Instead, the device maintains a single lightweight MQTT connection with keep‑alive; messages are delivered instantly and can be configured for at‑least‑once or exactly‑once semantics.  This pattern significantly improved reliability and reduced latency in real‑world tests.
+MQTT keeps printer clients small and portable. A device maintains one lightweight connection with keep-alive, subscribes to a topic, and receives binary payloads as jobs arrive. That model works well on Linux systems and resource-constrained microcontrollers because it avoids polling and keeps rendering logic on the server.
 
 ## Licence
 

@@ -1,8 +1,8 @@
-# ESP32 MQTT Printer Reference Client
+# ESP32 Arduino Bluetooth Client
 
 This Arduino sketch turns an ESP32 module into a wireless bridge between an MQTT broker and an Epson TM-P60II thermal printer, or another ESC/POS printer that speaks Bluetooth Classic Serial Port Profile. It subscribes to a topic containing raw ESC/POS bytes and forwards the payload to the printer.
 
-This is the included reference client for PrintEasy. The system itself is not limited to ESP32: any bridge that can subscribe to the MQTT topic, preserve binary payloads, and write raw bytes to a printer transport can be compatible.
+The system itself is not limited to ESP32: any bridge that can subscribe to the MQTT topic, preserve binary payloads, and write raw bytes to a printer transport can be compatible.
 
 ## Prerequisites
 

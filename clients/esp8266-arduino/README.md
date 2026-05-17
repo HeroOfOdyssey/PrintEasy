@@ -1,6 +1,6 @@
 # ESP8266 Arduino Serial Client
 
-This is a starter PrintEasy client for ESP8266 boards. It subscribes to the MQTT print topic over Wi-Fi and writes the binary ESC/POS payload to a serial printer connection.
+This PrintEasy client targets ESP8266 boards connected to serial printers. It subscribes to the MQTT print topic over Wi-Fi and writes the binary ESC/POS payload to a serial printer connection.
 
 ESP8266 does not have native Bluetooth. Use this client for UART/serial printers or for printers connected through an external serial adapter. For Bluetooth Classic SPP printers, ESP32 or Linux/Raspberry Pi is usually a better fit.
 
@@ -34,6 +34,6 @@ Edit constants in `esp8266_mqtt_serial_printer.ino`:
 | `PRINTER_BAUD` | Printer serial baud rate. |
 | `MQTT_BUFFER_SIZE` | MQTT receive buffer. Increase if memory allows; lower server raster band height if needed. |
 
-## Status
+## Hardware validation
 
-Starter support. The protocol is straightforward, but this path should be hardware-tested with your printer and adjusted for voltage level, baud rate, and buffer size.
+ESP8266 printer builds are hardware-sensitive. Validate voltage level, baud rate, serial pins, and MQTT buffer size with your specific printer before relying on large raster jobs.

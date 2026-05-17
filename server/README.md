@@ -140,7 +140,7 @@ The server does not require ESP32 specifically. It publishes binary ESC/POS payl
 * Preserve the MQTT payload as raw bytes.
 * Use a packet/buffer size large enough for raster bands.
 * Write those bytes to a printer transport such as Bluetooth SPP, USB, serial, or TCP.
-* Target a printer that understands the generated command set, currently ESC/POS by default.
+* Target a printer that understands the generated command set. The default command set is ESC/POS.
 
 ## Security
 

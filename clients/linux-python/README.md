@@ -1,6 +1,6 @@
 # Linux / Raspberry Pi Python Client
 
-This is the recommended non-microcontroller PrintEasy bridge. It runs on Raspberry Pi OS or general Linux, subscribes to the PrintEasy MQTT topic, and writes each binary ESC/POS payload unchanged to a printer device.
+This is the recommended non-microcontroller PrintEasy bridge. It runs on Linux systems, including Raspberry Pi, subscribes to the PrintEasy MQTT topic, and writes each binary ESC/POS payload unchanged to a printer device.
 
 Supported transports:
 
@@ -9,7 +9,7 @@ Supported transports:
 * `bluetooth` - Bluetooth Classic SPP exposed as an RFCOMM device, such as `/dev/rfcomm0`.
 * `file` - dry-run output for testing without a printer.
 
-## Quick setup on Raspberry Pi OS
+## Quick setup on Linux
 
 ```sh
 cd clients/linux-python
@@ -61,9 +61,25 @@ Edit `/etc/printeasy/client.env` after running the setup script.
 
 ## Bluetooth RFCOMM setup
 
-Bluetooth pairing is host-specific, so the daemon expects a ready RFCOMM device and writes to it like a serial port.
+The daemon writes to a ready RFCOMM device like a serial port. Use the helper script when you want the machine to scan for nearby printers and create the RFCOMM binding:
 
-Example flow:
+```sh
+cd clients/linux-python
+sudo ./pair-bluetooth.sh --name Epson
+```
+
+If multiple devices match, the script asks you to choose one. It pairs and trusts the selected device, then binds `/dev/rfcomm0` on RFCOMM channel `1` unless you pass `--device` or `--channel`.
+
+Then set:
+
+```env
+TRANSPORT=bluetooth
+DEVICE=/dev/rfcomm0
+```
+
+If the printer requires a PIN and automatic pairing fails, use `bluetoothctl` directly. Common ESC/POS printer PINs are `0000` and `1234`.
+
+Manual flow:
 
 ```sh
 sudo bluetoothctl
@@ -84,7 +100,7 @@ TRANSPORT=bluetooth
 DEVICE=/dev/rfcomm0
 ```
 
-Some printers require PIN `0000` or `1234`. If `/dev/rfcomm0` disappears after reboot, create a small systemd unit or udev rule to bind it before `printeasy-client.service`.
+If `/dev/rfcomm0` disappears after reboot, run `pair-bluetooth.sh --address <MAC>` again or create a small systemd unit/udev rule to bind it before `printeasy-client.service`.
 
 ## Raw USB setup
 

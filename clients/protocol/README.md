@@ -47,11 +47,11 @@ If a device drops large image jobs, reduce `RASTER_BAND_HEIGHT` on the server an
 
 | Target | Status | Printer transports | Notes |
 |---|---|---|---|
-| Linux / Raspberry Pi | Working core | Serial, raw USB, Bluetooth RFCOMM | Recommended non-microcontroller bridge. |
-| ESP32 Arduino | Working reference | Bluetooth Classic SPP | Best microcontroller choice for Bluetooth SPP printers. |
-| ESP8266 Arduino | Starter | UART / SoftwareSerial | No native Bluetooth; use serial printers or external serial adapters. |
-| Pico W / Pico 2 W | Starter | UART serial | Wi-Fi MQTT plus UART is the supported first path. |
-| Pico Bluetooth | Experimental/deferred | Bluetooth Classic SPP | Hardware supports Bluetooth, but SPP printer workflows require more SDK/BTstack-specific work. |
+| Linux / Raspberry Pi | Supported | Serial, raw USB, Bluetooth RFCOMM | Recommended non-microcontroller bridge. |
+| ESP32 Arduino | Supported | Bluetooth Classic SPP | Best microcontroller choice for Bluetooth SPP printers. |
+| ESP8266 Arduino | Hardware-adaptable | UART / SoftwareSerial | No native Bluetooth; use serial printers or external serial adapters. |
+| Pico W / Pico 2 W | Design guide | UART serial | Wi-Fi MQTT plus UART is the supported path. |
+| Pico Bluetooth | Advanced porting path | Bluetooth Classic SPP | Hardware supports Bluetooth, but SPP printer workflows require more SDK/BTstack-specific work. |
 
 ## Client checklist
 

@@ -33,6 +33,8 @@ mkdir -p "${INSTALL_DIR}" "${CONFIG_DIR}"
 cp "${SOURCE_DIR}/printeasy_client.py" "${INSTALL_DIR}/"
 cp "${SOURCE_DIR}/requirements.txt" "${INSTALL_DIR}/"
 cp "${SOURCE_DIR}/README.md" "${INSTALL_DIR}/"
+cp "${SOURCE_DIR}/pair-bluetooth.sh" "${INSTALL_DIR}/"
+chmod 755 "${INSTALL_DIR}/pair-bluetooth.sh"
 
 python3 -m venv "${INSTALL_DIR}/.venv"
 "${INSTALL_DIR}/.venv/bin/pip" install --upgrade pip

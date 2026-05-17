@@ -1,4 +1,4 @@
-# Pico W / Pico 2 W Client Starter
+# Pico W / Pico 2 W Serial Client Guide
 
 This directory documents the first supported PrintEasy path for Raspberry Pi Pico W and Pico 2 W:
 
@@ -6,7 +6,7 @@ This directory documents the first supported PrintEasy path for Raspberry Pi Pic
 Wi-Fi MQTT -> UART serial -> ESC/POS printer
 ```
 
-Pico W and Pico 2 W have Wi-Fi-capable hardware, and current Pico-family documentation lists wireless models with Wi-Fi and Bluetooth. For PrintEasy, the practical first implementation is MQTT over Wi-Fi plus UART serial output. Bluetooth Classic SPP printer support is marked experimental/deferred because it requires deeper C SDK / BTstack work than the serial bridge path.
+Pico W and Pico 2 W have Wi-Fi-capable hardware, and Pico-family documentation lists wireless models with Wi-Fi and Bluetooth. For PrintEasy, the practical implementation path is MQTT over Wi-Fi plus UART serial output. Bluetooth Classic SPP printer support is an advanced porting path because it requires deeper C SDK / BTstack work than the serial bridge path.
 
 ## Recommended implementation path
 
@@ -42,8 +42,8 @@ PRINTER_BAUD=9600
 WRITE_CHUNK_SIZE=1024
 ```
 
-## Status
+## Implementation status
 
-Starter documentation/scaffold only. The supported target behavior is clear, but this repo does not yet include a compiled Pico firmware project.
+This directory defines the Pico target behavior and configuration pattern. A compiled Pico firmware project is not included.
 
-Bluetooth printer output on Pico-family boards is experimental/deferred. Use ESP32 for microcontroller Bluetooth SPP, or Linux/Raspberry Pi with RFCOMM, when Bluetooth printer support is required today.
+For Bluetooth printers, use ESP32 for microcontroller Bluetooth SPP or Linux/Raspberry Pi with RFCOMM. Treat Pico Bluetooth printer output as a custom firmware port.
