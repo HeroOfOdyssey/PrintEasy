@@ -39,7 +39,7 @@ Recommended minimums:
 | Linux/Raspberry Pi | Streamed payload handling; optional write chunk size `4096` or larger. |
 | ESP32 Arduino | `16384` MQTT buffer for the default 420-dot raster band settings. |
 | ESP8266 Arduino | `8192` to `16384` if memory allows; lower `RASTER_BAND_HEIGHT` on the server if needed. |
-| Pico W / Pico 2 W | Prefer chunked writes; tune server raster band height if memory is tight. |
+| Pico W / Pico 2 W | Default firmware buffer `32768`; tune server raster band height if memory is tight. |
 
 If a device drops large image jobs, reduce `RASTER_BAND_HEIGHT` on the server and retest with `/preview` or the MCP `previewReceipt` tool.
 
@@ -50,8 +50,7 @@ If a device drops large image jobs, reduce `RASTER_BAND_HEIGHT` on the server an
 | Linux / Raspberry Pi | Supported | Serial, raw USB, Bluetooth RFCOMM | Recommended non-microcontroller bridge. |
 | ESP32 Arduino | Supported | Bluetooth Classic SPP | Best microcontroller choice for Bluetooth SPP printers. |
 | ESP8266 Arduino | Hardware-adaptable | UART / SoftwareSerial | No native Bluetooth; use serial printers or external serial adapters. |
-| Pico W / Pico 2 W | Design guide | UART serial | Wi-Fi MQTT plus UART is the supported path. |
-| Pico Bluetooth | Advanced porting path | Bluetooth Classic SPP | Hardware supports Bluetooth, but SPP printer workflows require more SDK/BTstack-specific work. |
+| Pico W / Pico 2 W | Firmware target | Bluetooth SPP, UART serial, USB CDC serial | USB mode is CDC device output, not USB host printer output. |
 
 ## Client checklist
 

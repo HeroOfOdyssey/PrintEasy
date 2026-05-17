@@ -39,7 +39,7 @@ For non-ESP32 clients, the important requirements are binary-safe MQTT payload h
 | [`clients/linux-python`](clients/linux-python/) | Supported | Raspberry Pi and Linux devices | Serial, raw USB, Bluetooth RFCOMM |
 | [`clients/esp32-arduino`](clients/esp32-arduino/) | Supported | Compact Bluetooth printer bridge | Bluetooth Classic SPP |
 | [`clients/esp8266-arduino`](clients/esp8266-arduino/) | Hardware-adaptable | Low-cost Wi-Fi serial bridge | UART / SoftwareSerial |
-| [`clients/pico-w`](clients/pico-w/) | Design guide | Pico W / Pico 2 W serial bridge | UART serial |
+| [`clients/pico-w`](clients/pico-w/) | Firmware target | Pico W / Pico 2 W bridge | Bluetooth SPP, UART serial, USB CDC serial |
 | [`clients/protocol`](clients/protocol/) | Shared contract | All clients | MQTT binary ESC/POS |
 
 For Raspberry Pi, use `clients/linux-python/`. Raspberry Pi is treated as a Linux target because Raspberry Pi OS exposes serial devices, raw USB printer devices, and Bluetooth RFCOMM through standard Linux interfaces.
@@ -56,7 +56,7 @@ mqtt_printer_bridge
 │   ├── linux-python           – Raspberry Pi / Linux Python bridge
 │   ├── esp32-arduino          – ESP32 Bluetooth SPP bridge
 │   ├── esp8266-arduino        – ESP8266 serial bridge
-│   └── pico-w                 – Pico W / Pico 2 W serial bridge guide
+│   └── pico-w                 – Pico W / Pico 2 W firmware target
 ├── mosquitto
 │   └── mosquitto.conf         – Local broker config for Docker Compose
 ├── server

@@ -1,49 +1,115 @@
-# Pico W / Pico 2 W Serial Client Guide
+# Pico W / Pico 2 W Client
 
-This directory documents the first supported PrintEasy path for Raspberry Pi Pico W and Pico 2 W:
+This is a Raspberry Pi Pico SDK firmware target for PrintEasy. It subscribes to the MQTT print topic over Wi-Fi and writes each binary ESC/POS payload unchanged to one printer transport.
 
-```text
-Wi-Fi MQTT -> UART serial -> ESC/POS printer
+Supported build-time transports:
+
+| Transport | Build value | Use for |
+|---|---|---|
+| Bluetooth Classic SPP | `-DPRINTER_TRANSPORT=bluetooth` | Mobile ESC/POS printers that expose Serial Port Profile. |
+| UART serial | `-DPRINTER_TRANSPORT=serial` | TTL/serial ESC/POS modules and adapters. |
+| USB CDC serial | `-DPRINTER_TRANSPORT=usb` | USB serial output to a host or adapter. This is USB device-mode, not USB host mode for raw USB printers. |
+
+Bluetooth Classic SPP is the primary Pico path in this directory. The firmware connects as an SPP client to a configured printer address, queries SDP for the printer's RFCOMM channel when needed, buffers MQTT payload chunks, and sends them over RFCOMM as the link allows.
+
+## Requirements
+
+* Raspberry Pi Pico W or Pico 2 W.
+* Raspberry Pi Pico SDK with submodules initialized.
+* CMake and an ARM embedded toolchain.
+* An MQTT broker reachable from the Pico's Wi-Fi network.
+* An ESC/POS printer reachable through the selected transport.
+
+## Build: Bluetooth Classic SPP
+
+Get the printer MAC address from a phone, desktop Bluetooth settings, Linux `bluetoothctl devices`, or the Linux helper in `../linux-python/pair-bluetooth.sh`. Then build:
+
+```sh
+export PICO_SDK_PATH=/path/to/pico-sdk
+
+cmake -S . -B build \
+  -DWIFI_SSID="YOUR_WIFI" \
+  -DWIFI_PASSWORD="YOUR_WIFI_PASSWORD" \
+  -DMQTT_SERVER="192.168.1.10" \
+  -DMQTT_TOPIC="receipt/print" \
+  -DPRINTER_TRANSPORT=bluetooth \
+  -DPRINTER_BT_ADDR="AA:BB:CC:DD:EE:FF" \
+  -DPRINTER_BT_PIN="0000"
+
+cmake --build build
 ```
 
-Pico W and Pico 2 W have Wi-Fi-capable hardware, and Pico-family documentation lists wireless models with Wi-Fi and Bluetooth. For PrintEasy, the practical implementation path is MQTT over Wi-Fi plus UART serial output. Bluetooth Classic SPP printer support is an advanced porting path because it requires deeper C SDK / BTstack work than the serial bridge path.
+The resulting UF2 is `build/printeasy_pico.uf2`.
 
-## Recommended implementation path
+The default board is `pico_w`. For Pico 2 W, add the board setting supported by your installed Pico SDK, for example `-DPICO_BOARD=pico2_w`.
 
-Use the Raspberry Pi Pico C/C++ SDK rather than MicroPython for the first robust version:
+By default, the firmware queries SDP for the printer's Serial Port Profile RFCOMM channel. If your printer requires a fixed channel, add:
 
-* Configure Wi-Fi credentials and MQTT broker settings at build time.
-* Subscribe to `MQTT_TOPIC`.
-* Treat MQTT payloads as binary bytes.
-* Write payload chunks to UART using `uart_write_blocking`.
-* Tune server `RASTER_BAND_HEIGHT` if memory is tight.
+```text
+-DPRINTER_BT_CHANNEL=1
+```
 
-## Wiring notes
+## Build: UART serial
+
+```sh
+cmake -S . -B build-serial \
+  -DWIFI_SSID="YOUR_WIFI" \
+  -DWIFI_PASSWORD="YOUR_WIFI_PASSWORD" \
+  -DMQTT_SERVER="192.168.1.10" \
+  -DPRINTER_TRANSPORT=serial \
+  -DPRINTER_UART_ID=0 \
+  -DPRINTER_UART_TX_PIN=0 \
+  -DPRINTER_UART_RX_PIN=1 \
+  -DPRINTER_BAUD=9600
+
+cmake --build build-serial
+```
+
+Wiring:
 
 * Pico UART TX -> printer RX.
+* Pico UART RX -> printer TX if the printer exposes it; otherwise it can remain unused.
 * Common ground between Pico and printer.
 * Use a level shifter or interface board if the printer serial input is not 3.3 V safe.
-* Confirm printer baud rate before testing large jobs.
 
-## Configuration template
+## Build: USB CDC serial
 
-Use these values in the eventual C SDK project or MicroPython prototype:
+```sh
+cmake -S . -B build-usb \
+  -DWIFI_SSID="YOUR_WIFI" \
+  -DWIFI_PASSWORD="YOUR_WIFI_PASSWORD" \
+  -DMQTT_SERVER="192.168.1.10" \
+  -DPRINTER_TRANSPORT=usb
 
-```text
-WIFI_SSID=YOUR_WIFI_SSID
-WIFI_PASSWORD=YOUR_WIFI_PASSWORD
-MQTT_SERVER=192.168.1.10
-MQTT_PORT=1883
-MQTT_TOPIC=receipt/print
-UART_ID=uart0
-UART_TX_PIN=0
-UART_RX_PIN=1
-PRINTER_BAUD=9600
-WRITE_CHUNK_SIZE=1024
+cmake --build build-usb
 ```
 
-## Implementation status
+USB CDC mode emits raw ESC/POS bytes over the Pico's USB serial device. Use it when another host or adapter is consuming that byte stream. Pico W is not acting as a USB host, so this mode does not drive `/dev/usb/lp0`-style raw USB printers directly.
 
-This directory defines the Pico target behavior and configuration pattern. A compiled Pico firmware project is not included.
+## Configuration
 
-For Bluetooth printers, use ESP32 for microcontroller Bluetooth SPP or Linux/Raspberry Pi with RFCOMM. Treat Pico Bluetooth printer output as a custom firmware port.
+| CMake setting | Description |
+|---|---|
+| `WIFI_SSID`, `WIFI_PASSWORD` | Wi-Fi credentials compiled into the firmware. |
+| `MQTT_SERVER`, `MQTT_PORT` | MQTT broker hostname/IP and port. TLS is not enabled in this firmware. |
+| `MQTT_TOPIC` | PrintEasy topic, default `receipt/print`. |
+| `MQTT_USERNAME`, `MQTT_PASSWORD` | Optional MQTT broker credentials. |
+| `PRINTER_TRANSPORT` | `bluetooth`, `serial`, or `usb`. |
+| `PRINTER_BT_ADDR` | Bluetooth printer MAC address for SPP mode. |
+| `PRINTER_BT_PIN` | Pairing PIN, usually `0000` or `1234`. |
+| `PRINTER_BT_CHANNEL` | RFCOMM channel. Use `0` to query SDP automatically. |
+| `PRINTER_UART_ID` | `0` or `1` for UART serial mode. |
+| `PRINTER_UART_TX_PIN`, `PRINTER_UART_RX_PIN` | GPIO pins for UART serial mode. |
+| `PRINTER_BAUD` | Serial baud rate. |
+| `PRINTEASY_BUFFER_SIZE` | Bytes buffered while Bluetooth/USB output catches up. Default `32768`. |
+
+## Runtime notes
+
+* Print jobs are binary MQTT payloads, not JSON.
+* Large raster jobs can exceed microcontroller buffers. If image jobs drop or truncate, lower `RASTER_BAND_HEIGHT` on the server.
+* Bluetooth SPP printers vary in pairing behavior. If pairing fails with `0000`, rebuild with `-DPRINTER_BT_PIN=1234`.
+* USB CDC output shares the USB serial stream. Avoid using USB serial logging as a printer transport during production jobs.
+
+## Validation
+
+The firmware project is intended to compile with the Pico SDK. Hardware behavior still needs to be tested with the target printer because Bluetooth pairing, RFCOMM channel selection, UART voltage level, and printer buffer size differ by model.
