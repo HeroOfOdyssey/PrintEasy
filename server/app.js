@@ -42,6 +42,9 @@ const RASTER_FONT_SIZE = parseInt(process.env.RASTER_FONT_SIZE || '22', 10);
 const RASTER_LINE_HEIGHT = parseInt(process.env.RASTER_LINE_HEIGHT || '28', 10);
 const RASTER_MARGIN_X = parseInt(process.env.RASTER_MARGIN_X || '0', 10);
 const ALLOW_TOPIC_OVERRIDE = (process.env.ALLOW_TOPIC_OVERRIDE || 'false').toLowerCase() === 'true';
+const PRINT_QUEUE_MAX_JOBS = parseInt(process.env.PRINT_QUEUE_MAX_JOBS || '100', 10);
+const PRINT_QUEUE_RETRY_MS = parseInt(process.env.PRINT_QUEUE_RETRY_MS || '5000', 10);
+const PRINT_QUEUE_HISTORY_LIMIT = parseInt(process.env.PRINT_QUEUE_HISTORY_LIMIT || '50', 10);
 
 // Configure Express to parse text and JSON bodies
 app.use(express.text({ type: ['text/*', 'application/octet-stream'], limit: '64kb' }));
@@ -87,6 +90,7 @@ let mqttConnected = false;
 mqttClient.on('connect', () => {
   mqttConnected = true;
   console.log('[MQTT] connected');
+  scheduleQueueTimer();
 });
 
 mqttClient.on('reconnect', () => {
@@ -102,6 +106,197 @@ mqttClient.on('error', (err) => {
   console.error('[MQTT] error:', err.message);
 });
 
+const printQueue = [];
+const printQueueHistory = [];
+let queueTimer = null;
+let queueProcessing = false;
+let queueSequence = 0;
+
+function createQueueId() {
+  queueSequence += 1;
+  return `job_${Date.now().toString(36)}_${queueSequence.toString(36)}`;
+}
+
+function parseScheduleOptions(source = {}) {
+  const scheduleAt = source.scheduleAt || source.printAt || source.runAt;
+  const delayMsRaw = source.delayMs === undefined ? source.delay : source.delayMs;
+  let runAtMs = Date.now();
+
+  if (scheduleAt !== undefined && scheduleAt !== null && scheduleAt !== '') {
+    const parsed = Date.parse(String(scheduleAt));
+    if (Number.isNaN(parsed)) {
+      throw new Error('scheduleAt must be an ISO 8601 date/time string.');
+    }
+    runAtMs = parsed;
+  }
+
+  if (delayMsRaw !== undefined && delayMsRaw !== null && delayMsRaw !== '') {
+    const delayMs = Number(delayMsRaw);
+    if (!Number.isFinite(delayMs) || delayMs < 0) {
+      throw new Error('delayMs must be a non-negative number of milliseconds.');
+    }
+    runAtMs = Math.max(runAtMs, Date.now() + Math.floor(delayMs));
+  }
+
+  return {
+    runAtMs,
+    scheduled: runAtMs > Date.now() + 10,
+  };
+}
+
+function publicQueueJob(job) {
+  return {
+    id: job.id,
+    topic: job.topic,
+    bytes: job.bytes,
+    status: job.status,
+    createdAt: job.createdAt,
+    runAt: job.runAt,
+    completedAt: job.completedAt || null,
+    attempts: job.attempts,
+    lastError: job.lastError || null,
+    source: job.source,
+  };
+}
+
+function queueSnapshot() {
+  return {
+    pending: printQueue.map(publicQueueJob),
+    history: printQueueHistory.map(publicQueueJob),
+    limits: {
+      maxJobs: PRINT_QUEUE_MAX_JOBS,
+      historyLimit: PRINT_QUEUE_HISTORY_LIMIT,
+      retryMs: PRINT_QUEUE_RETRY_MS,
+    },
+  };
+}
+
+function addHistory(job, status, error) {
+  printQueueHistory.unshift({
+    ...job,
+    status,
+    completedAt: new Date().toISOString(),
+    lastError: error ? String(error.message || error) : job.lastError || null,
+    escpos: undefined,
+  });
+  while (printQueueHistory.length > PRINT_QUEUE_HISTORY_LIMIT) {
+    printQueueHistory.pop();
+  }
+}
+
+function enqueuePrintJob(escpos, topic, options = {}) {
+  if (printQueue.length >= PRINT_QUEUE_MAX_JOBS) {
+    throw new Error(`Print queue is full. Max pending jobs: ${PRINT_QUEUE_MAX_JOBS}.`);
+  }
+  const runAtMs = options.runAtMs || Date.now();
+  const job = {
+    id: createQueueId(),
+    escpos,
+    topic,
+    bytes: escpos.length,
+    status: 'queued',
+    createdAt: new Date().toISOString(),
+    runAt: new Date(runAtMs).toISOString(),
+    runAtMs,
+    attempts: 0,
+    lastError: null,
+    source: options.source || 'api',
+  };
+  printQueue.push(job);
+  printQueue.sort((a, b) => a.runAtMs - b.runAtMs || a.id.localeCompare(b.id));
+  scheduleQueueTimer();
+  return job;
+}
+
+function scheduleQueueTimer() {
+  if (queueTimer) {
+    clearTimeout(queueTimer);
+    queueTimer = null;
+  }
+  if (!printQueue.length) {
+    return;
+  }
+  const first = printQueue[0];
+  const delay = mqttConnected ? Math.max(0, first.runAtMs - Date.now()) : PRINT_QUEUE_RETRY_MS;
+  queueTimer = setTimeout(() => {
+    queueTimer = null;
+    processPrintQueue().catch((err) => {
+      console.error('[QUEUE] processing error:', err.message);
+      scheduleQueueTimer();
+    });
+  }, Math.min(delay, 2147483647));
+}
+
+async function processPrintQueue() {
+  if (queueProcessing) {
+    return;
+  }
+  queueProcessing = true;
+  try {
+    while (printQueue.length) {
+      const job = printQueue[0];
+      if (job.runAtMs > Date.now()) {
+        break;
+      }
+      if (!mqttConnected) {
+        job.status = 'waiting_for_mqtt';
+        job.lastError = 'MQTT broker not connected';
+        break;
+      }
+
+      job.status = 'publishing';
+      job.attempts += 1;
+      try {
+        await publishEscPos(job.escpos, job.topic);
+        printQueue.shift();
+        addHistory(job, 'published');
+        console.log(`[QUEUE] published ${job.id} (${job.bytes} bytes) to ${job.topic}`);
+      } catch (err) {
+        job.status = 'retrying';
+        job.lastError = err.message || String(err);
+        console.error(`[QUEUE] publish failed for ${job.id}: ${job.lastError}`);
+        break;
+      }
+    }
+  } finally {
+    queueProcessing = false;
+    scheduleQueueTimer();
+  }
+}
+
+function cancelQueuedJob(id) {
+  const index = printQueue.findIndex(job => job.id === id);
+  if (index === -1) {
+    return null;
+  }
+  const [job] = printQueue.splice(index, 1);
+  job.status = 'cancelled';
+  addHistory(job, 'cancelled');
+  scheduleQueueTimer();
+  return job;
+}
+
+async function publishOrQueueEscPos(escpos, topic, options = {}) {
+  const schedule = parseScheduleOptions(options);
+  if (schedule.scheduled || options.queue === true) {
+    const job = enqueuePrintJob(escpos, topic, {
+      runAtMs: schedule.runAtMs,
+      source: options.source,
+    });
+    return {
+      ok: true,
+      queued: true,
+      job: publicQueueJob(job),
+    };
+  }
+
+  await publishEscPos(escpos, topic);
+  return {
+    ok: true,
+    queued: false,
+  };
+}
+
 // Normalise request body into a markdown string
 function normalisePayload(req) {
   // If the body is text, return as‑is
@@ -112,6 +307,10 @@ function normalisePayload(req) {
   if (req.body && typeof req.body.markdown === 'string') {
     return req.body.markdown;
   }
+  // If the body has a text property
+  if (req.body && typeof req.body.text === 'string') {
+    return req.body.text;
+  }
   // If the body contains a list of tasks
   if (req.body && Array.isArray(req.body.tasks)) {
     return buildTaskMarkdown(req.body.tasks);
@@ -121,6 +320,16 @@ function normalisePayload(req) {
     return '';
   }
   throw new Error('Unsupported request body');
+}
+
+function scheduleOptionsFromRequest(req, source) {
+  const body = req.body && typeof req.body === 'object' && !Buffer.isBuffer(req.body) ? req.body : {};
+  return {
+    scheduleAt: body.scheduleAt || body.printAt || body.runAt || (req.query && (req.query.scheduleAt || req.query.printAt || req.query.runAt)),
+    delayMs: body.delayMs !== undefined ? body.delayMs : (body.delay !== undefined ? body.delay : req.query && (req.query.delayMs || req.query.delay)),
+    queue: body.queue === true || body.queue === 'true' || (req.query && req.query.queue === 'true'),
+    source,
+  };
 }
 
 // Convert markdown to ESC/POS bytes
@@ -481,6 +690,24 @@ function encodePreview(escpos, args = {}) {
   return result;
 }
 
+function schedulingSchemaProperties() {
+  return {
+    scheduleAt: {
+      type: 'string',
+      description: 'Optional ISO 8601 date/time to publish the job later, e.g. 2026-05-17T19:30:00Z.',
+    },
+    delayMs: {
+      type: 'integer',
+      minimum: 0,
+      description: 'Optional delay in milliseconds before publishing. If scheduleAt is also supplied, the later time wins.',
+    },
+    queue: {
+      type: 'boolean',
+      description: 'When true, enqueue the job even if it is due immediately.',
+    },
+  };
+}
+
 function decodeRawEscPos(args = {}) {
   if (typeof args.data !== 'string' || !args.data.trim()) {
     throw new Error('Raw ESC/POS data is required.');
@@ -540,6 +767,7 @@ const mcpTools = [
           type: 'string',
           description: 'Optional MQTT topic override. Requires ALLOW_TOPIC_OVERRIDE=true.',
         },
+        ...schedulingSchemaProperties(),
       },
       anyOf: [
         { required: ['tasks'] },
@@ -615,6 +843,7 @@ const mcpTools = [
           type: 'string',
           description: 'Optional MQTT topic override. Requires ALLOW_TOPIC_OVERRIDE=true.',
         },
+        ...schedulingSchemaProperties(),
       },
       required: ['data'],
     },
@@ -622,6 +851,41 @@ const mcpTools = [
       destructiveHint: false,
       idempotentHint: false,
       openWorldHint: true,
+    },
+  },
+  {
+    name: 'listPrintQueue',
+    title: 'List Print Queue',
+    description: 'Return pending scheduled print jobs and recent queue history.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+    },
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+      openWorldHint: false,
+    },
+  },
+  {
+    name: 'cancelQueuedPrint',
+    title: 'Cancel Queued Print',
+    description: 'Cancel a pending scheduled print job by id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: {
+          type: 'string',
+          description: 'Queued print job id returned by printReceipt or publishEscPos.',
+        },
+      },
+      required: ['id'],
+    },
+    annotations: {
+      destructiveHint: true,
+      idempotentHint: false,
+      openWorldHint: false,
     },
   },
   {
@@ -697,6 +961,12 @@ function printerStatus() {
     mqtt: mqttConnected,
     topic: MQTT_TOPIC,
     topicOverrideAllowed: ALLOW_TOPIC_OVERRIDE,
+    queue: {
+      pending: printQueue.length,
+      history: printQueueHistory.length,
+      maxJobs: PRINT_QUEUE_MAX_JOBS,
+      retryMs: PRINT_QUEUE_RETRY_MS,
+    },
     renderer: {
       mode: RASTER_MARKDOWN ? 'raster' : 'receiptline',
       widthDots: PRINTER_DOTS,
@@ -715,14 +985,19 @@ async function callMcpTool(name, args = {}) {
     const markdown = markdownFromToolArgs(args);
     const escpos = await composePrintJob({ markdown, qr: args.qr, image: args.image });
     const topic = resolvePublishTopic(args);
-    await publishEscPos(escpos, topic);
+    const publishResult = await publishOrQueueEscPos(escpos, topic, { ...args, source: 'mcp:printReceipt' });
     const structuredContent = {
       ok: true,
       bytes: escpos.length,
       topic,
+      queued: publishResult.queued,
+      job: publishResult.job,
       mode: RASTER_MARKDOWN ? 'raster' : 'receiptline',
       widthDots: PRINTER_DOTS,
     };
+    if (publishResult.queued) {
+      return mcpToolResult(`Queued ${escpos.length} ESC/POS bytes for MQTT topic "${topic}" at ${publishResult.job.runAt}.`, structuredContent);
+    }
     return mcpToolResult(`Published ${escpos.length} ESC/POS bytes to MQTT topic "${topic}".`, structuredContent);
   }
 
@@ -740,11 +1015,43 @@ async function callMcpTool(name, args = {}) {
       throw new Error('Decoded ESC/POS payload is empty.');
     }
     const topic = resolvePublishTopic(args);
-    await publishEscPos(escpos, topic);
+    const publishResult = await publishOrQueueEscPos(escpos, topic, { ...args, source: 'mcp:publishEscPos' });
+    if (publishResult.queued) {
+      return mcpToolResult(`Queued ${escpos.length} raw ESC/POS bytes for MQTT topic "${topic}" at ${publishResult.job.runAt}.`, {
+        ok: true,
+        queued: true,
+        bytes: escpos.length,
+        topic,
+        job: publishResult.job,
+      });
+    }
     return mcpToolResult(`Published ${escpos.length} raw ESC/POS bytes to MQTT topic "${topic}".`, {
       ok: true,
+      queued: false,
       bytes: escpos.length,
       topic,
+    });
+  }
+
+  if (name === 'listPrintQueue') {
+    const snapshot = queueSnapshot();
+    return mcpToolResult(`Pending queue jobs: ${snapshot.pending.length}. Recent history entries: ${snapshot.history.length}.`, {
+      ok: true,
+      ...snapshot,
+    });
+  }
+
+  if (name === 'cancelQueuedPrint') {
+    if (!args || typeof args.id !== 'string' || !args.id.trim()) {
+      throw new Error('Queued job id is required.');
+    }
+    const job = cancelQueuedJob(args.id.trim());
+    if (!job) {
+      throw new Error(`Queued job not found: ${args.id}`);
+    }
+    return mcpToolResult(`Cancelled queued print job ${job.id}.`, {
+      ok: true,
+      cancelled: publicQueueJob(job),
     });
   }
 
@@ -839,6 +1146,18 @@ app.get('/health', (req, res) => {
   res.json(printerStatus());
 });
 
+app.get('/queue', requireApiToken, (req, res) => {
+  res.json({ ok: true, ...queueSnapshot() });
+});
+
+app.delete('/queue/:id', requireApiToken, (req, res) => {
+  const job = cancelQueuedJob(req.params.id);
+  if (!job) {
+    return res.status(404).json({ ok: false, error: 'queued job not found' });
+  }
+  res.json({ ok: true, cancelled: publicQueueJob(job) });
+});
+
 // Print endpoint
 // Extended print endpoint.  Accepts optional `qr` and `image` properties on
 // the request body.  These fields will be converted into ESC/POS commands via
@@ -852,8 +1171,16 @@ app.post('/print', requireApiToken, async (req, res) => {
       qr: req.body && req.body.qr,
       image: req.body && req.body.image,
     });
-    await publishEscPos(escpos, MQTT_TOPIC);
-    res.json({ ok: true, bytes: escpos.length, topic: MQTT_TOPIC, mode: RASTER_MARKDOWN ? 'raster' : 'receiptline', widthDots: PRINTER_DOTS });
+    const result = await publishOrQueueEscPos(escpos, MQTT_TOPIC, scheduleOptionsFromRequest(req, 'http POST /print'));
+    res.json({
+      ok: true,
+      queued: result.queued,
+      job: result.job,
+      bytes: escpos.length,
+      topic: MQTT_TOPIC,
+      mode: RASTER_MARKDOWN ? 'raster' : 'receiptline',
+      widthDots: PRINTER_DOTS,
+    });
   } catch (err) {
     const status = err.message === 'MQTT broker not connected' ? 503 : 400;
     res.status(status).json({ ok: false, error: err.message });

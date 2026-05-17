@@ -6,21 +6,25 @@ By default, markdown is rendered server-side into a fixed-width 1-bit raster ima
 
 ## Features
 
-* **POST `/print`** - Accepts plain text, markdown, or a JSON payload like `{ "tasks": ["Task 1", "Task 2"], "qr": "https://example.com", "image": "data:image/png;base64,..." }`. Converts the input into ESC/POS bytes and publishes to MQTT. Requires an API token.
+* **POST `/print`** - Accepts plain text, markdown, or a JSON payload like `{ "tasks": ["Task 1", "Task 2"], "qr": "https://example.com", "image": "data:image/png;base64,..." }`. Converts the input into ESC/POS bytes and publishes to MQTT or schedules it for later. Requires an API token.
 * **POST `/preview`** - Same input as `/print`, but returns a hex string of the generated ESC/POS bytes instead of publishing. Useful for debugging before sending a job to a printer.
+* **GET `/queue`** - Returns pending scheduled print jobs and recent queue history.
+* **DELETE `/queue/:id`** - Cancels a pending scheduled print job.
 * **GET `/health`** - Returns server status, MQTT connection state, default topic, whether per-request topics are enabled, and renderer settings.
 * **POST `/mcp`** - JSON-RPC MCP endpoint. Supports `initialize`, `ping`, `tools/list`, and `tools/call`. Requires the same API token as `/print`.
 * **GET `/mcp/sse`** - Server-Sent Events stream for MCP tool-result notifications. EventSource clients can pass the token as `?token=<API_TOKEN>`; clients that support headers should prefer `Authorization: Bearer <API_TOKEN>`.
 
 ## MCP tools
 
-The MCP endpoint exposes four tools:
+The MCP endpoint exposes these tools:
 
 | Tool | Purpose |
 |---|---|
-| `printReceipt` | Renders `tasks`, `text`, `markdown`, `qr`, and/or `image` into ESC/POS and publishes it to MQTT. |
+| `printReceipt` | Renders `tasks`, `text`, `markdown`, `qr`, and/or `image` into ESC/POS and publishes it to MQTT or schedules it for later. |
 | `previewReceipt` | Renders the job without publishing and returns byte counts plus optional hex/base64 previews. |
-| `publishEscPos` | Publishes trusted raw ESC/POS bytes supplied as base64 or hex. |
+| `publishEscPos` | Publishes trusted raw ESC/POS bytes supplied as base64 or hex, immediately or on a schedule. |
+| `listPrintQueue` | Returns pending scheduled jobs and recent queue history. |
+| `cancelQueuedPrint` | Cancels a pending scheduled job by id. |
 | `getPrinterStatus` | Returns MQTT and renderer status/configuration. |
 
 MCP tool definitions use `inputSchema` and tool calls return MCP-style `content`, `structuredContent`, and `isError` fields.
@@ -37,6 +41,9 @@ The service reads configuration values from environment variables.  Copy `.env.e
 | `MQTT_USER` / `MQTT_PASS` | Credentials for the MQTT broker if authentication is required. |
 | `MQTT_TOPIC` | Topic to which print jobs are published.  Clients should subscribe to this exact topic. |
 | `ALLOW_TOPIC_OVERRIDE` | When `true`, MCP requests may publish to a `topic` argument instead of only `MQTT_TOPIC`. Defaults to `false`. |
+| `PRINT_QUEUE_MAX_JOBS` | Maximum pending scheduled jobs kept in memory. Defaults to `100`. |
+| `PRINT_QUEUE_RETRY_MS` | Retry interval for due queued jobs while MQTT is disconnected or publish fails. Defaults to `5000`. |
+| `PRINT_QUEUE_HISTORY_LIMIT` | Number of published/cancelled queue entries to keep in memory for inspection. Defaults to `50`. |
 | `PRINTER_CPL` | Characters per line for receipt formatting.  Defaults to 42 for 58 mm paper. |
 | `PRINTER_COMMAND` | Command set for receiptline to generate (default `escpos`). |
 | `PRINTER_ENCODING` | Character encoding (default `multilingual`). |
@@ -108,7 +115,34 @@ Normal markdown, headings, bullets, numbered lists, GitHub-style checkboxes, hor
 
    Ensure an MQTT broker is running and reachable at `MQTT_URL`, and that at least one bridge client is subscribed to `MQTT_TOPIC`.
 
-3. MCP example:
+3. Schedule a print request:
+
+   ```sh
+   curl -X POST http://localhost:3000/print \
+     -H "Authorization: Bearer <API_TOKEN>" \
+     -H "Content-Type: application/json" \
+     --data-raw '{"tasks":["Start prep"],"scheduleAt":"2026-05-17T20:30:00Z"}'
+   ```
+
+   Relative scheduling is also supported:
+
+   ```sh
+   curl -X POST http://localhost:3000/print \
+     -H "Authorization: Bearer <API_TOKEN>" \
+     -H "Content-Type: application/json" \
+     --data-raw '{"text":"Print this in 30 seconds","delayMs":30000}'
+   ```
+
+   Inspect and cancel queued jobs:
+
+   ```sh
+   curl -H "Authorization: Bearer <API_TOKEN>" http://localhost:3000/queue
+   curl -X DELETE -H "Authorization: Bearer <API_TOKEN>" http://localhost:3000/queue/<JOB_ID>
+   ```
+
+   The queue is in memory. It is designed for operator timing and retry during short broker outages, not as durable storage across server restarts.
+
+4. MCP example:
 
    ```sh
    curl -X POST http://localhost:3000/mcp \
@@ -125,6 +159,8 @@ Normal markdown, headings, bullets, numbered lists, GitHub-style checkboxes, hor
      -H "Content-Type: application/json" \
      --data-raw '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"previewReceipt","arguments":{"markdown":"# Test\n\n- [ ] Print from MCP","includeHex":true,"maxBytes":64}}}'
    ```
+
+   Schedule from MCP by adding `scheduleAt` or `delayMs` to `printReceipt` or `publishEscPos` arguments.
 
 ## Docker usage
 
