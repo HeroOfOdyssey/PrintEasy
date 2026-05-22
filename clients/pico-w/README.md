@@ -114,6 +114,7 @@ USB CDC mode emits raw ESC/POS bytes over the Pico's USB serial device. Use it w
 
 * Print jobs are binary MQTT payloads, not JSON.
 * TLS verifies the broker certificate against `MQTT_CA_CERT_FILE`; the certificate must include the hostname or IP used in `MQTT_SERVER`.
+* Prefer ECDSA P-256 CA and broker certificates for Pico W TLS. Large RSA certificates can exhaust heap during X.509 parsing.
 * Large raster jobs can exceed microcontroller buffers. If image jobs drop or truncate, lower `RASTER_BAND_HEIGHT` on the server.
 * Bluetooth SPP printers vary in pairing behavior. If pairing fails with `0000`, rebuild with `-DPRINTER_BT_PIN=1234`.
 * USB CDC output shares the USB serial stream. Avoid using USB serial logging as a printer transport during production jobs.

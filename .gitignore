@@ -6,6 +6,8 @@ __pycache__/
 .env
 server/.env
 mosquitto/certs/
+mosquitto/certs.backup.*/
+mosquitto/certs.broker-backup.*/
 mosquitto/passwd
 
 .DS_Store

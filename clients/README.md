@@ -13,6 +13,10 @@ Clients subscribe to the PrintEasy MQTT topic and forward binary ESC/POS payload
 
 All clients support MQTT username/password credentials. Linux, ESP32, ESP8266, and Pico W clients also support MQTT over TLS with a broker CA certificate; see each client README for the target-specific setup switches.
 
+## Embedded client lessons
+
+TLS requires a valid device clock, so Wi-Fi clients must sync time before verifying certificates. For ESP32, ESP8266, and Pico W, prefer ECDSA P-256 broker certificates; large RSA certificates can fail with X.509 allocation errors. Bluetooth Classic plus TLS is memory-heavy, so keep MQTT buffers only as large as the server payloads require. If raster jobs are too large, lower `RASTER_BAND_HEIGHT` on the server or use the Linux/Raspberry Pi client.
+
 ## Choosing a client
 
 Use `linux-python/` for the easiest Raspberry Pi setup and for printers connected through USB, serial adapters, or Bluetooth RFCOMM. Use `esp32-arduino/` for a compact Bluetooth SPP printer bridge. Use `esp8266-arduino/` for a low-cost Wi-Fi microcontroller connected to a serial printer. Use `pico-w/` when you want Pico SDK firmware with Bluetooth SPP, UART serial, or USB CDC serial output.

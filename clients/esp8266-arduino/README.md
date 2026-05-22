@@ -39,3 +39,5 @@ Edit constants in `esp8266_mqtt_serial_printer.ino`:
 ## Hardware validation
 
 ESP8266 printer builds are hardware-sensitive. Validate voltage level, baud rate, serial pins, and MQTT buffer size with your specific printer before relying on large raster jobs. TLS builds also need working NTP access through `NTP_SERVER` so certificate validation has a valid clock.
+
+Use compact TLS certificates for ESP8266. ECDSA P-256 CA and broker certificates are preferred; RSA-4096 certificates can exceed available heap during X.509 parsing. If certificate verification fails while `MQTT_TLS_INSECURE` works, check that the broker certificate includes the exact DNS name or IP address in `MQTT_SERVER`.

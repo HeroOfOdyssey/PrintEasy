@@ -108,6 +108,12 @@ curl -X POST http://localhost:3000/print \
 
    Printer clients should connect to MQTT with `MQTT_SERVER=<host-or-ip>`, `MQTT_PORT=8883`, `MQTT_USER`, `MQTT_PASS`, and the CA certificate from `mosquitto/certs/ca.crt`.
 
+### Embedded TLS notes
+
+For ESP32, ESP8266, and Pico W clients, use compact TLS certificates. Prefer an ECDSA P-256 CA and broker certificate; large RSA certificates, especially RSA-4096, can exhaust heap during X.509 parsing. The broker certificate must include the exact DNS name or IP address used by the client in its subject alternative names. If a client has trouble verifying an IP-address certificate, use a direct DNS name that resolves to the broker, such as a `nip.io` name, and include that DNS name in the broker certificate.
+
+Microcontroller clients have limited RAM. TLS, Bluetooth Classic, and large raster MQTT payloads compete for heap. If small jobs work but raster/image jobs fail, reduce the client MQTT buffer and lower server `RASTER_BAND_HEIGHT`, or use the Linux/Raspberry Pi client for larger jobs.
+
 ## Why MQTT?
 
 MQTT keeps printer clients small and portable. A device maintains one lightweight connection with keep-alive, subscribes to a topic, and receives binary payloads as jobs arrive. That model works well on Linux systems and resource-constrained microcontrollers because it avoids polling and keeps rendering logic on the server.

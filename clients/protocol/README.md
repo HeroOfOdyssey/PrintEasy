@@ -37,11 +37,13 @@ Recommended minimums:
 | Client type | Recommended receive/write buffer |
 |---|---:|
 | Linux/Raspberry Pi | Streamed payload handling; optional write chunk size `4096` or larger. |
-| ESP32 Arduino | `16384` MQTT buffer for the default 420-dot raster band settings. |
+| ESP32 Arduino | Start around `8192` for TLS + Bluetooth Classic heap headroom; increase only if payloads are too large and memory allows. |
 | ESP8266 Arduino | `8192` to `16384` if memory allows; lower `RASTER_BAND_HEIGHT` on the server if needed. |
 | Pico W / Pico 2 W | Default firmware buffer `32768`; tune server raster band height if memory is tight. |
 
 If a device drops large image jobs, reduce `RASTER_BAND_HEIGHT` on the server and retest with `/preview` or the MCP `previewReceipt` tool.
+
+When using MQTT over TLS on microcontrollers, certificate size matters. Prefer ECDSA P-256 CA/broker certificates and avoid RSA-4096 chains, which can exhaust heap during X.509 parsing. The broker certificate must include the exact DNS name or IP address used by the client.
 
 ## Compatibility matrix
 

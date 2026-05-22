@@ -183,4 +183,4 @@ The server does not require ESP32 specifically. It publishes binary ESC/POS payl
 
 * **Authentication** - The REST print/preview endpoints and MCP endpoint require the API token. Set `API_TOKEN` to a strong random value and do not commit your `.env` file.
 * **Raw ESC/POS** - `publishEscPos` is intentionally powerful. Only expose MCP to trusted operators.
-* **TLS** - For production deployments, run the broker with TLS (e.g. `mqtts://broker.example.com:8883`) and use secure credentials. Consider placing this server behind a reverse proxy such as Caddy, nginx, or Traefik to terminate HTTPS for REST/MCP traffic.
+* **TLS** - For production deployments, run the broker with TLS (e.g. `mqtts://broker.example.com:8883`) and use secure credentials. For embedded clients, prefer ECDSA P-256 certificates rather than RSA-4096 to avoid heap exhaustion during certificate parsing. Ensure the broker certificate includes the exact DNS name or IP address clients use. Consider placing this server behind a reverse proxy such as Caddy, nginx, or Traefik to terminate HTTPS for REST/MCP traffic.

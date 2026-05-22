@@ -24,12 +24,13 @@ Open `esp32_mqtt_printer.ino` and edit the following constants at the top of the
 | `PRINTER_BT_USE_MAC` | Set `true` to connect by Bluetooth MAC address, or `false` to connect by printer name. |
 | `PRINTER_BT_MAC` | Printer Bluetooth MAC address as six hex bytes, for example `0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF`. Used when `PRINTER_BT_USE_MAC` is `true`. |
 | `PRINTER_BT_NAME` | Bluetooth device name. This is ignored when `PRINTER_BT_USE_MAC` is `true`; it is only used when `PRINTER_BT_USE_MAC` is `false`. |
-| `MQTT_BUFFER_SIZE` | MQTT receive buffer size. It must be larger than the largest ESC/POS packet sent by the server. The default sketch uses `16384`, which fits the default raster band size. |
-| `BT_WAKE_INTERVAL` | Milliseconds between sending a newline to the printer.  Prevents the printer from going into power‑save mode. |
+| `MQTT_BUFFER_SIZE` | MQTT receive buffer size. It must be larger than the largest ESC/POS packet sent by the server. The default sketch uses `8192` to leave heap for TLS and Bluetooth Classic. |
 
 If your printer prompts for a pairing PIN, set `SerialBT.setPin("0000")` accordingly in `setup()`.
 
 TLS builds synchronize time from `NTP_SERVER` before connecting so certificate validation can succeed. Make sure the broker certificate includes the hostname or IP address used in `MQTT_SERVER`.
+
+For embedded TLS, prefer an ECDSA P-256 CA and broker certificate. Large RSA certificates, especially RSA-4096, can fail on ESP32 with errors such as `X509 - Allocation of memory failed`. Some ESP32 core versions verify DNS subject alternative names more reliably than raw IP subject alternative names; if IP verification fails, use a direct DNS name that resolves to the broker and include that DNS name in the broker certificate.
 
 ## Building and flashing
 
@@ -37,6 +38,27 @@ TLS builds synchronize time from `NTP_SERVER` before connecting so certificate v
 2. Install the `PubSubClient` library via the Arduino Library Manager.
 3. Connect your ESP32 board, select the correct board and port in the IDE, open `esp32_mqtt_printer.ino` and click “Upload”. TLS plus Bluetooth Classic can exceed the default app partition on common ESP32 boards; select a large app partition such as `Huge APP (3MB No OTA/1MB SPIFFS)` when `MQTT_TLS` is enabled.
 4. Open the Serial Monitor at 115200 baud to see logs.  You should see messages about connecting to Wi‑Fi, the MQTT broker and the printer.
+
+Recommended Arduino settings for ESP32-WROOM-32/32U-style boards:
+
+| Setting | Value |
+|---|---|
+| Board | `ESP32 Dev Module` |
+| Partition Scheme | `Huge APP (3MB No OTA/1MB SPIFFS)` |
+| Flash Mode | `QIO` |
+| Flash Frequency | `80MHz` |
+| PSRAM | `Disabled`, unless your board reports real PSRAM |
+
+If TLS and Bluetooth Classic run out of heap on ESP32 Arduino core 3.x, try core `2.0.17`. The sketch handles the pairing PIN API difference between 2.x and 3.x.
+
+The sketch does not send periodic newline keepalives to the printer. Newlines advance receipt paper, so printer wake behavior should be handled by the printer or by real print jobs, not by idle keepalive bytes.
+
+## Troubleshooting
+
+* `MQTT failed, state=-2` means the network/TLS socket did not connect; check TLS errors printed after it.
+* `X509 - Allocation of memory failed` usually means the certificate chain is too large; use ECDSA P-256 certificates.
+* `SSL - Memory allocation failed` usually means TLS and Bluetooth Classic are competing for heap; reduce `MQTT_BUFFER_SIZE`, use ESP32 core `2.0.17`, or reduce server `RASTER_BAND_HEIGHT`.
+* `MQTT_TLS_INSECURE=1` still encrypts traffic but disables broker identity verification. Use it only as a diagnostic to separate certificate verification problems from connectivity problems.
 
 ## MQTT topic format
 

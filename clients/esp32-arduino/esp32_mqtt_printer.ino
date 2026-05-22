@@ -15,6 +15,13 @@
 #include <PubSubClient.h>
 #include "BluetoothSerial.h"
 #include <time.h>
+#if __has_include(<esp_arduino_version.h>)
+#include <esp_arduino_version.h>
+#endif
+
+#ifndef ESP_ARDUINO_VERSION_MAJOR
+#define ESP_ARDUINO_VERSION_MAJOR 2
+#endif
 
 // ==== Wi‑Fi configuration ====
 const char* WIFI_SSID     = "YOUR_WIFI_SSID";
@@ -42,10 +49,10 @@ const char* PRINTER_BT_NAME = "TM-P60II";
 const bool PRINTER_BT_USE_MAC = true;
 uint8_t PRINTER_BT_MAC[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-// ==== Keep‑alive settings ====
-static const unsigned long BT_WAKE_INTERVAL = 60000; // send wake newline every 60 seconds
+// ==== Runtime settings ====
 static const unsigned long RECONNECT_INTERVAL = 5000; // retry connections every 5 seconds
-static const uint16_t MQTT_BUFFER_SIZE = 16384; // must fit the largest ESC/POS MQTT packet
+// Must fit the largest MQTT print payload. Keep lower for TLS + Bluetooth heap headroom.
+static const uint16_t MQTT_BUFFER_SIZE = 8192;
 
 #if MQTT_TLS
 WiFiClientSecure wifiClient;
@@ -55,7 +62,6 @@ WiFiClient wifiClient;
 PubSubClient mqttClient(wifiClient);
 BluetoothSerial SerialBT;
 
-unsigned long lastWake = 0;
 unsigned long lastReconnect = 0;
 bool printerConnected = false;
 
@@ -169,7 +175,11 @@ void setup() {
     Serial.println("An error occurred initializing Bluetooth");
   }
   // Some Epson printers require pairing PIN 0000 or 1234
+#if ESP_ARDUINO_VERSION_MAJOR >= 3
   SerialBT.setPin("0000", 4);
+#else
+  SerialBT.setPin("0000");
+#endif
   // Configure MQTT client
   mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
   mqttClient.setCallback(mqttCallback);
@@ -191,12 +201,5 @@ void loop() {
   }
   // Maintain MQTT connection
   mqttClient.loop();
-  // Wake up printer periodically
-  unsigned long now = millis();
-  if (printerConnected && now - lastWake > BT_WAKE_INTERVAL) {
-    lastWake = now;
-    SerialBT.write('\n');
-    SerialBT.flush();
-  }
   delay(10);
 }
