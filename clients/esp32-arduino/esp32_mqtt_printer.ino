@@ -11,8 +11,10 @@
  */
 
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include "BluetoothSerial.h"
+#include <time.h>
 
 // ==== Wi‑Fi configuration ====
 const char* WIFI_SSID     = "YOUR_WIFI_SSID";
@@ -20,10 +22,17 @@ const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
 // ==== MQTT configuration ====
 const char* MQTT_SERVER   = "mqtt.example.com"; // broker host or IP
-const uint16_t MQTT_PORT  = 1883;               // 1883 for unencrypted, 8883 for TLS
-const char* MQTT_USER     = nullptr;            // set to MQTT username or nullptr
-const char* MQTT_PASS     = nullptr;            // set to MQTT password or nullptr
+#define MQTT_TLS 1                              // 1 for TLS, 0 for unencrypted
+const uint16_t MQTT_PORT  = MQTT_TLS ? 8883 : 1883;
+const char* MQTT_USER     = "printeasy";        // set to MQTT username or nullptr
+const char* MQTT_PASS     = "change-me";        // set to MQTT password or nullptr
 const char* MQTT_TOPIC    = "receipt/print";     // topic to subscribe to
+const char MQTT_CA_CERT[] PROGMEM = R"PEM(
+-----BEGIN CERTIFICATE-----
+replace-with-your-printeasy-ca-certificate
+-----END CERTIFICATE-----
+)PEM";
+const char* NTP_SERVER = "pool.ntp.org";
 
 // ==== Printer configuration ====
 const char* PRINTER_BT_NAME = "TM-P60II"; // Bluetooth device name of the Epson printer
@@ -34,7 +43,11 @@ static const unsigned long BT_WAKE_INTERVAL = 60000; // send wake newline every 
 static const unsigned long RECONNECT_INTERVAL = 5000; // retry connections every 5 seconds
 static const uint16_t MQTT_BUFFER_SIZE = 16384; // must fit the largest ESC/POS MQTT packet
 
+#if MQTT_TLS
+WiFiClientSecure wifiClient;
+#else
 WiFiClient wifiClient;
+#endif
 PubSubClient mqttClient(wifiClient);
 BluetoothSerial SerialBT;
 
@@ -54,6 +67,15 @@ void connectWiFi() {
   Serial.println();
   Serial.print("WiFi connected: ");
   Serial.println(WiFi.localIP());
+#if MQTT_TLS
+  configTime(0, 0, NTP_SERVER);
+  time_t now = time(nullptr);
+  while (now < 1700000000) {
+    delay(500);
+    now = time(nullptr);
+  }
+  wifiClient.setCACert(MQTT_CA_CERT);
+#endif
 }
 
 void connectPrinter() {

@@ -38,6 +38,7 @@ The service reads configuration values from environment variables.  Copy `.env.e
 | `API_TOKEN` | Secret token for authenticating API requests.  Clients must include `Authorization: Bearer <API_TOKEN>` or `X-API-Token: <API_TOKEN>` in the request. |
 | `HOST` | Host address for the HTTP server to bind. Defaults to `0.0.0.0` for container use. Use `127.0.0.1` for local-only development. |
 | `MQTT_URL` | Connection string for the MQTT broker (e.g. `mqtt://localhost:1883` or `mqtts://broker.example.com:8883`). |
+| `MQTT_CA_CERT` | Optional CA certificate path used to verify a private/self-signed TLS broker. |
 | `MQTT_USER` / `MQTT_PASS` | Credentials for the MQTT broker if authentication is required. |
 | `MQTT_TOPIC` | Topic to which print jobs are published.  Clients should subscribe to this exact topic. |
 | `ALLOW_TOPIC_OVERRIDE` | When `true`, MCP requests may publish to a `topic` argument instead of only `MQTT_TOPIC`. Defaults to `false`. |
@@ -164,9 +165,9 @@ Normal markdown, headings, bullets, numbered lists, GitHub-style checkboxes, hor
 
 ## Docker usage
 
-The provided `Dockerfile` builds a lightweight container using `node:18-alpine`, fontconfig, and DejaVu fonts for predictable SVG-to-raster output. To run the server via Docker Compose alongside an MQTT broker, see the root-level [`docker-compose.yml`](../docker-compose.yml). Adjust the broker URL in `server/.env` to `mqtt://mqtt-broker:1883` to reference the broker service defined in the compose file.
+The provided `Dockerfile` builds a lightweight container using `node:18-alpine`, fontconfig, and DejaVu fonts for predictable SVG-to-raster output. To run the server via Docker Compose alongside an MQTT broker, see the root-level [`docker-compose.yml`](../docker-compose.yml). Adjust the broker URL in `server/.env` to `mqtts://mqtt-broker:8883` to reference the TLS broker service defined in the compose file.
 
-Compose publishes the container's port `3000` to host port `3000` by default. If that host port is busy, run `HTTP_PORT=3002 docker compose up` from the repository root.
+Compose publishes the container's port `3000` to host port `3000` by default. If that host port is busy, run `HTTP_PORT=3002 docker compose up` from the repository root. The compose broker config requires MQTT credentials and exposes TLS on `8883`; set `MQTT_TLS_BIND` to choose the host bind address.
 
 ## Client compatibility
 

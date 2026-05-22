@@ -5,5 +5,7 @@ __pycache__/
 
 .env
 server/.env
+mosquitto/certs/
+mosquitto/passwd
 
 .DS_Store

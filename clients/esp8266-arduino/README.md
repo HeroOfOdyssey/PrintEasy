@@ -27,8 +27,10 @@ Edit constants in `esp8266_mqtt_serial_printer.ino`:
 | Constant | Description |
 |---|---|
 | `WIFI_SSID`, `WIFI_PASSWORD` | Wi-Fi credentials. |
-| `MQTT_SERVER`, `MQTT_PORT` | MQTT broker host and port. |
-| `MQTT_USER`, `MQTT_PASS` | Optional broker credentials. |
+| `MQTT_SERVER`, `MQTT_PORT` | MQTT broker host and port. Use `8883` when `MQTT_TLS` is enabled. |
+| `MQTT_TLS` | Set `1` for MQTT over TLS or `0` for plaintext MQTT. |
+| `MQTT_USER`, `MQTT_PASS` | Broker credentials. Treat `MQTT_PASS` as the device access token. |
+| `MQTT_CA_CERT` | PEM CA certificate that signed the broker certificate. Required when `MQTT_TLS` is `1`. |
 | `MQTT_TOPIC` | Print topic, default `receipt/print`. |
 | `PRINTER_RX_PIN`, `PRINTER_TX_PIN` | SoftwareSerial pins. |
 | `PRINTER_BAUD` | Printer serial baud rate. |
@@ -36,4 +38,4 @@ Edit constants in `esp8266_mqtt_serial_printer.ino`:
 
 ## Hardware validation
 
-ESP8266 printer builds are hardware-sensitive. Validate voltage level, baud rate, serial pins, and MQTT buffer size with your specific printer before relying on large raster jobs.
+ESP8266 printer builds are hardware-sensitive. Validate voltage level, baud rate, serial pins, and MQTT buffer size with your specific printer before relying on large raster jobs. TLS builds also need working NTP access through `NTP_SERVER` so certificate validation has a valid clock.

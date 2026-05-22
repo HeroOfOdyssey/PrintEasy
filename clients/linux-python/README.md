@@ -52,6 +52,8 @@ Edit `/etc/printeasy/client.env` after running the setup script.
 | `MQTT_URL` | Broker URL, e.g. `mqtt://192.168.1.10:1883` or `mqtts://broker.example.com:8883`. |
 | `MQTT_TOPIC` | Print topic, default `receipt/print`. |
 | `MQTT_USER`, `MQTT_PASS` | Optional broker credentials. |
+| `MQTT_CA_CERT` | Optional CA certificate path for private/self-signed TLS brokers. |
+| `MQTT_TLS_INSECURE` | Set `true` only for temporary troubleshooting; disables TLS certificate verification. |
 | `TRANSPORT` | `serial`, `usb`, `bluetooth`, or `file`. |
 | `DEVICE` | Device path to write to, such as `/dev/ttyUSB0`, `/dev/usb/lp0`, `/dev/rfcomm0`, or a test file. |
 | `SERIAL_BAUD` | Baud rate for `serial` transport. Many serial ESC/POS printers use `9600`, `19200`, or `115200`. |

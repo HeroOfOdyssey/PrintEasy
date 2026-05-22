@@ -16,14 +16,18 @@ Open `esp32_mqtt_printer.ino` and edit the following constants at the top of the
 | Constant | Description |
 |---|---|
 | `WIFI_SSID`, `WIFI_PASSWORD` | Your Wi‑Fi network credentials. |
-| `MQTT_SERVER`, `MQTT_PORT` | Address and port of your MQTT broker.  When using the included docker‑compose setup, set this to `mqtt-broker` and `1883`. |
-| `MQTT_USER`, `MQTT_PASS` | Broker credentials if required; leave as `nullptr` for anonymous access. |
+| `MQTT_SERVER`, `MQTT_PORT` | Address and port of your MQTT broker. Use `8883` when `MQTT_TLS` is enabled. |
+| `MQTT_TLS` | Set `1` for MQTT over TLS or `0` for plaintext MQTT. |
+| `MQTT_USER`, `MQTT_PASS` | Broker credentials. Treat `MQTT_PASS` as the device access token. |
+| `MQTT_CA_CERT` | PEM CA certificate that signed the broker certificate. Required when `MQTT_TLS` is `1`. |
 | `MQTT_TOPIC` | Topic to subscribe to for print jobs (must match the server’s setting). |
 | `PRINTER_BT_NAME` | The Bluetooth device name of your printer (as seen when pairing).  Alternatively, hard‑code the MAC address in the sketch and call `SerialBT.connect(uint8_t[6])`. |
 | `MQTT_BUFFER_SIZE` | MQTT receive buffer size. It must be larger than the largest ESC/POS packet sent by the server. The default sketch uses `16384`, which fits the default raster band size. |
 | `BT_WAKE_INTERVAL` | Milliseconds between sending a newline to the printer.  Prevents the printer from going into power‑save mode. |
 
 If your printer prompts for a pairing PIN, set `SerialBT.setPin("0000")` accordingly in `setup()`.
+
+TLS builds synchronize time from `NTP_SERVER` before connecting so certificate validation can succeed. Make sure the broker certificate includes the hostname or IP address used in `MQTT_SERVER`.
 
 ## Building and flashing
 

@@ -27,6 +27,8 @@ set(MQTT_PORT "1883" CACHE STRING "MQTT broker port")
 set(MQTT_TOPIC "receipt/print" CACHE STRING "PrintEasy MQTT topic")
 set(MQTT_USERNAME "" CACHE STRING "Optional MQTT username")
 set(MQTT_PASSWORD "" CACHE STRING "Optional MQTT password")
+set(MQTT_TLS "OFF" CACHE BOOL "Enable MQTT over TLS")
+set(MQTT_CA_CERT_FILE "" CACHE FILEPATH "PEM CA certificate for MQTT TLS")
 set(PRINTER_TRANSPORT "bluetooth" CACHE STRING "Printer transport: bluetooth, serial, or usb")
 set(PRINTER_BT_ADDR "" CACHE STRING "Bluetooth printer MAC address, e.g. AA:BB:CC:DD:EE:FF")
 set(PRINTER_BT_PIN "0000" CACHE STRING "Bluetooth pairing PIN")
@@ -70,6 +72,22 @@ target_compile_definitions(printeasy_pico PRIVATE
   PRINTEASY_BUFFER_SIZE=${PRINTEASY_BUFFER_SIZE}
 )
 
+if (MQTT_TLS)
+  if (NOT MQTT_CA_CERT_FILE)
+    message(FATAL_ERROR "Set MQTT_CA_CERT_FILE when MQTT_TLS is enabled")
+  endif()
+  file(READ "${MQTT_CA_CERT_FILE}" MQTT_CA_CERT_PEM)
+  configure_file(
+    ${CMAKE_CURRENT_LIST_DIR}/include/mqtt_ca_cert.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/mqtt_ca_cert.h
+    @ONLY
+  )
+  target_include_directories(printeasy_pico PRIVATE ${CMAKE_CURRENT_BINARY_DIR}/generated)
+  target_compile_definitions(printeasy_pico PRIVATE MQTT_TLS=1)
+else()
+  target_compile_definitions(printeasy_pico PRIVATE MQTT_TLS=0)
+endif()
+
 if (MQTT_USERNAME AND MQTT_PASSWORD)
   target_compile_definitions(printeasy_pico PRIVATE
     MQTT_USERNAME="${MQTT_USERNAME}"
@@ -83,6 +101,8 @@ if (PRINTER_TRANSPORT_LOWER STREQUAL "bluetooth")
     pico_stdlib
     pico_cyw43_arch_lwip_threadsafe_background
     pico_lwip_mqtt
+    $<$<BOOL:${MQTT_TLS}>:pico_lwip_mbedtls>
+    $<$<BOOL:${MQTT_TLS}>:pico_mbedtls>
     pico_btstack_classic
   )
 elseif (PRINTER_TRANSPORT_LOWER STREQUAL "serial")
@@ -92,6 +112,8 @@ elseif (PRINTER_TRANSPORT_LOWER STREQUAL "serial")
     hardware_uart
     pico_cyw43_arch_lwip_threadsafe_background
     pico_lwip_mqtt
+    $<$<BOOL:${MQTT_TLS}>:pico_lwip_mbedtls>
+    $<$<BOOL:${MQTT_TLS}>:pico_mbedtls>
   )
 elseif (PRINTER_TRANSPORT_LOWER STREQUAL "usb")
   target_compile_definitions(printeasy_pico PRIVATE PRINTEASY_TRANSPORT_USB=1)
@@ -100,6 +122,8 @@ elseif (PRINTER_TRANSPORT_LOWER STREQUAL "usb")
     pico_stdio_usb
     pico_cyw43_arch_lwip_threadsafe_background
     pico_lwip_mqtt
+    $<$<BOOL:${MQTT_TLS}>:pico_lwip_mbedtls>
+    $<$<BOOL:${MQTT_TLS}>:pico_mbedtls>
   )
 endif()
 

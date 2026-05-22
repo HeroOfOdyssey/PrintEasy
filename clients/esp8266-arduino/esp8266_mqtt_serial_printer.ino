@@ -7,8 +7,10 @@
  */
 
 #include <ESP8266WiFi.h>
+#include <WiFiClientSecureBearSSL.h>
 #include <PubSubClient.h>
 #include <SoftwareSerial.h>
+#include <time.h>
 
 // ==== Wi-Fi configuration ====
 const char* WIFI_SSID = "YOUR_WIFI_SSID";
@@ -16,10 +18,17 @@ const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
 // ==== MQTT configuration ====
 const char* MQTT_SERVER = "mqtt.example.com";
-const uint16_t MQTT_PORT = 1883;
-const char* MQTT_USER = nullptr;
-const char* MQTT_PASS = nullptr;
+#define MQTT_TLS 1
+const uint16_t MQTT_PORT = MQTT_TLS ? 8883 : 1883;
+const char* MQTT_USER = "printeasy";
+const char* MQTT_PASS = "change-me";
 const char* MQTT_TOPIC = "receipt/print";
+const char MQTT_CA_CERT[] PROGMEM = R"PEM(
+-----BEGIN CERTIFICATE-----
+replace-with-your-printeasy-ca-certificate
+-----END CERTIFICATE-----
+)PEM";
+const char* NTP_SERVER = "pool.ntp.org";
 
 // ==== Printer serial configuration ====
 static const uint8_t PRINTER_RX_PIN = D6; // ESP8266 receives from printer, often unused
@@ -29,7 +38,12 @@ static const uint32_t PRINTER_BAUD = 9600;
 static const uint16_t MQTT_BUFFER_SIZE = 8192;
 static const unsigned long RECONNECT_INTERVAL = 5000;
 
+#if MQTT_TLS
+BearSSL::WiFiClientSecure wifiClient;
+BearSSL::X509List caCert(MQTT_CA_CERT);
+#else
 WiFiClient wifiClient;
+#endif
 PubSubClient mqttClient(wifiClient);
 SoftwareSerial printerSerial(PRINTER_RX_PIN, PRINTER_TX_PIN);
 
@@ -47,6 +61,16 @@ void connectWiFi() {
   Serial.println();
   Serial.print("WiFi connected: ");
   Serial.println(WiFi.localIP());
+#if MQTT_TLS
+  configTime(0, 0, NTP_SERVER);
+  time_t now = time(nullptr);
+  while (now < 1700000000) {
+    delay(500);
+    now = time(nullptr);
+  }
+  wifiClient.setX509Time(now);
+  wifiClient.setTrustAnchors(&caCert);
+#endif
 }
 
 void connectMQTT() {

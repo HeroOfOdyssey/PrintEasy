@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import os
 import socket
+import ssl
 import sys
 import time
 from dataclasses import dataclass
@@ -51,6 +52,8 @@ class Config:
     mqtt_topic: str
     mqtt_user: str | None
     mqtt_pass: str | None
+    mqtt_ca_cert: str | None
+    mqtt_tls_insecure: bool
     transport: str
     device: str
     serial_baud: int
@@ -74,6 +77,8 @@ class Config:
             mqtt_topic=values.get("MQTT_TOPIC", "receipt/print"),
             mqtt_user=values.get("MQTT_USER") or None,
             mqtt_pass=values.get("MQTT_PASS") or None,
+            mqtt_ca_cert=values.get("MQTT_CA_CERT") or None,
+            mqtt_tls_insecure=parse_bool(values.get("MQTT_TLS_INSECURE"), False),
             transport=transport,
             device=device,
             serial_baud=int(values.get("SERIAL_BAUD", "9600")),
@@ -144,7 +149,8 @@ def build_client(config: Config, writer: PrinterWriter) -> mqtt.Client:
     if config.mqtt_user:
         client.username_pw_set(config.mqtt_user, config.mqtt_pass)
     if use_tls:
-        client.tls_set()
+        client.tls_set(ca_certs=config.mqtt_ca_cert, cert_reqs=ssl.CERT_NONE if config.mqtt_tls_insecure else ssl.CERT_REQUIRED)
+        client.tls_insecure_set(config.mqtt_tls_insecure)
 
     def on_connect(client_obj: mqtt.Client, _userdata, _flags, rc: int) -> None:
         if rc == 0:

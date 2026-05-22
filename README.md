@@ -72,7 +72,7 @@ mqtt_printer_bridge
 
 To try the system locally, you can use Docker Compose.  This spins up an MQTT broker (eclipse‑mosquitto) and the Node.js server in separate containers.  Follow these steps:
 
-1. Copy `./server/.env.example` to `./server/.env` and adjust the values to suit your environment.  At a minimum, set `API_TOKEN` to a strong secret.  If you run the broker on the default ports locally, the example values will work.
+1. Copy `./server/.env.example` to `./server/.env` and adjust the values to suit your environment.  At a minimum, set `API_TOKEN` and `MQTT_PASS` to strong secrets.  The compose setup uses MQTT username/password authentication and publishes a TLS listener on port `8883`; distribute `./mosquitto/certs/ca.crt` to clients that verify the broker certificate.
 
 2. From the repository root, run:
 
@@ -81,10 +81,16 @@ docker compose build
 docker compose up
 ```
 
-If host port `3000` is already in use, publish the server on another local port:
+If host port `3000` is already in use, publish the HTTP API on another local port:
 
 ```sh
 HTTP_PORT=3002 docker compose up
+```
+
+To control the public MQTT TLS bind address, set `MQTT_TLS_BIND`, for example:
+
+```sh
+MQTT_TLS_BIND=0.0.0.0:8883 docker compose up
 ```
 
 3. Once the containers are running, you can send a print job via HTTP:
@@ -99,6 +105,8 @@ curl -X POST http://localhost:3000/print \
    The server will convert your task list into ESC/POS commands and publish them to the MQTT topic. Any compatible client subscribed to that topic can forward the payload to a printer.
 
 4. The `/health` endpoint returns the server's status, MQTT connection state, default topic, and renderer settings.
+
+   Printer clients should connect to MQTT with `MQTT_SERVER=<host-or-ip>`, `MQTT_PORT=8883`, `MQTT_USER`, `MQTT_PASS`, and the CA certificate from `mosquitto/certs/ca.crt`.
 
 ## Why MQTT?
 

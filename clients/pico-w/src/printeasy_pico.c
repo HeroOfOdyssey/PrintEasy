@@ -12,6 +12,11 @@
 #include "lwip/dns.h"
 #include "lwip/ip_addr.h"
 
+#if MQTT_TLS
+#include "lwip/altcp_tls.h"
+#include "mqtt_ca_cert.h"
+#endif
+
 #if PRINTEASY_TRANSPORT_SERIAL
 #include "hardware/uart.h"
 #endif
@@ -43,6 +48,9 @@
 typedef struct {
     mqtt_client_t *client;
     struct mqtt_connect_client_info_t info;
+#if MQTT_TLS
+    struct altcp_tls_config *tls_config;
+#endif
     ip_addr_t server_addr;
     char topic[MQTT_TOPIC_MAX];
     bool incoming_print_job;
@@ -346,6 +354,16 @@ static void mqtt_start(printeasy_mqtt_t *state) {
         }
         mqtt_set_inpub_callback(state->client, mqtt_incoming_publish_cb, mqtt_incoming_data_cb, state);
     }
+
+#if MQTT_TLS
+    if (!state->tls_config) {
+        state->tls_config = altcp_tls_create_config_client((const uint8_t *)MQTT_CA_CERT, strlen(MQTT_CA_CERT) + 1);
+        if (!state->tls_config) {
+            panic("Could not allocate MQTT TLS config");
+        }
+        state->info.tls_config = state->tls_config;
+    }
+#endif
 
     cyw43_arch_lwip_begin();
     err_t err = mqtt_client_connect(state->client, &state->server_addr, MQTT_PORT, mqtt_connection_cb, state, &state->info);

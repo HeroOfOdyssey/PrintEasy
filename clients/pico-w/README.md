@@ -31,6 +31,11 @@ cmake -S . -B build \
   -DWIFI_SSID="YOUR_WIFI" \
   -DWIFI_PASSWORD="YOUR_WIFI_PASSWORD" \
   -DMQTT_SERVER="192.168.1.10" \
+  -DMQTT_PORT=8883 \
+  -DMQTT_TLS=ON \
+  -DMQTT_CA_CERT_FILE=/path/to/ca.crt \
+  -DMQTT_USERNAME="printeasy" \
+  -DMQTT_PASSWORD="YOUR_MQTT_TOKEN" \
   -DMQTT_TOPIC="receipt/print" \
   -DPRINTER_TRANSPORT=bluetooth \
   -DPRINTER_BT_ADDR="AA:BB:CC:DD:EE:FF" \
@@ -91,9 +96,11 @@ USB CDC mode emits raw ESC/POS bytes over the Pico's USB serial device. Use it w
 | CMake setting | Description |
 |---|---|
 | `WIFI_SSID`, `WIFI_PASSWORD` | Wi-Fi credentials compiled into the firmware. |
-| `MQTT_SERVER`, `MQTT_PORT` | MQTT broker hostname/IP and port. TLS is not enabled in this firmware. |
+| `MQTT_SERVER`, `MQTT_PORT` | MQTT broker hostname/IP and port. Use `8883` when TLS is enabled. |
+| `MQTT_TLS` | Enables MQTT over TLS when set to `ON`. |
+| `MQTT_CA_CERT_FILE` | PEM CA certificate used to verify the broker when `MQTT_TLS=ON`. |
 | `MQTT_TOPIC` | PrintEasy topic, default `receipt/print`. |
-| `MQTT_USERNAME`, `MQTT_PASSWORD` | Optional MQTT broker credentials. |
+| `MQTT_USERNAME`, `MQTT_PASSWORD` | MQTT broker credentials. Treat `MQTT_PASSWORD` as the device access token. |
 | `PRINTER_TRANSPORT` | `bluetooth`, `serial`, or `usb`. |
 | `PRINTER_BT_ADDR` | Bluetooth printer MAC address for SPP mode. |
 | `PRINTER_BT_PIN` | Pairing PIN, usually `0000` or `1234`. |
@@ -106,6 +113,7 @@ USB CDC mode emits raw ESC/POS bytes over the Pico's USB serial device. Use it w
 ## Runtime notes
 
 * Print jobs are binary MQTT payloads, not JSON.
+* TLS verifies the broker certificate against `MQTT_CA_CERT_FILE`; the certificate must include the hostname or IP used in `MQTT_SERVER`.
 * Large raster jobs can exceed microcontroller buffers. If image jobs drop or truncate, lower `RASTER_BAND_HEIGHT` on the server.
 * Bluetooth SPP printers vary in pairing behavior. If pairing fails with `0000`, rebuild with `-DPRINTER_BT_PIN=1234`.
 * USB CDC output shares the USB serial stream. Avoid using USB serial logging as a printer transport during production jobs.

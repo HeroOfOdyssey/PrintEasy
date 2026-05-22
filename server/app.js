@@ -12,6 +12,7 @@ require('dotenv').config();
 
 process.env.XDG_CACHE_HOME = process.env.XDG_CACHE_HOME || '/tmp';
 
+const fs = require('fs');
 const express = require('express');
 const mqtt = require('mqtt');
 const receiptline = require('receiptline');
@@ -29,6 +30,7 @@ const API_TOKEN = process.env.API_TOKEN || '';
 const MQTT_URL = process.env.MQTT_URL || 'mqtt://localhost:1883';
 const MQTT_USER = process.env.MQTT_USER || undefined;
 const MQTT_PASS = process.env.MQTT_PASS || undefined;
+const MQTT_CA_CERT = process.env.MQTT_CA_CERT || undefined;
 const MQTT_TOPIC = process.env.MQTT_TOPIC || 'receipt/print';
 const PRINTER_CPL = parseInt(process.env.PRINTER_CPL || '42', 10);
 const PRINTER_COMMAND = process.env.PRINTER_COMMAND || 'escpos';
@@ -83,6 +85,7 @@ function buildTaskMarkdown(tasks) {
 const mqttOptions = {};
 if (MQTT_USER) mqttOptions.username = MQTT_USER;
 if (MQTT_PASS) mqttOptions.password = MQTT_PASS;
+if (MQTT_CA_CERT) mqttOptions.ca = fs.readFileSync(MQTT_CA_CERT);
 const mqttClient = mqtt.connect(MQTT_URL, mqttOptions);
 
 let mqttConnected = false;

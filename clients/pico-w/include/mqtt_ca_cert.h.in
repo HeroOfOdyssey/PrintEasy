@@ -1,0 +1,6 @@
+#ifndef PRINTEASY_MQTT_CA_CERT_H
+#define PRINTEASY_MQTT_CA_CERT_H
+
+static const char MQTT_CA_CERT[] = R"PEM(@MQTT_CA_CERT_PEM@)PEM";
+
+#endif

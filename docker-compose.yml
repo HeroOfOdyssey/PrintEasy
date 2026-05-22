@@ -4,9 +4,12 @@ services:
     image: eclipse-mosquitto:2
     restart: unless-stopped
     ports:
-      - "1883:1883"
+      - "127.0.0.1:1883:1883"
+      - "${MQTT_TLS_BIND:-0.0.0.0:8883}:8883"
     volumes:
       - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/passwd:/mosquitto/config/passwd:ro
+      - ./mosquitto/certs:/mosquitto/config/certs:ro
       - mosquitto-data:/mosquitto/data
       - mosquitto-log:/mosquitto/log
 
@@ -23,13 +26,16 @@ services:
       - "${HTTP_PORT:-3000}:3000"
     # Ensure the server waits until the broker is up
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/health', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
       interval: 30s
       timeout: 10s
       retries: 3
     # Docker Compose will automatically supply the service name `mqtt-broker` as the host
     environment:
-      - MQTT_URL=mqtt://mqtt-broker:1883
+      - MQTT_URL=mqtts://mqtt-broker:8883
+      - MQTT_CA_CERT=/etc/printeasy/mqtt-ca.crt
+    volumes:
+      - ./mosquitto/certs/ca.crt:/etc/printeasy/mqtt-ca.crt:ro
 
 volumes:
   mosquitto-data:
