@@ -11,8 +11,8 @@ By default, markdown is rendered server-side into a fixed-width 1-bit raster ima
 * **GET `/queue`** - Returns pending scheduled print jobs and recent queue history.
 * **DELETE `/queue/:id`** - Cancels a pending scheduled print job.
 * **GET `/health`** - Returns server status, MQTT connection state, default topic, whether per-request topics are enabled, and renderer settings.
-* **POST `/mcp`** - JSON-RPC MCP endpoint. Supports `initialize`, `ping`, `tools/list`, and `tools/call`. Requires the same API token as `/print`.
-* **GET `/mcp/sse`** - Server-Sent Events stream for MCP tool-result notifications. EventSource clients can pass the token as `?token=<API_TOKEN>`; clients that support headers should prefer `Authorization: Bearer <API_TOKEN>`.
+* **POST `/mcp`** - MCP Streamable HTTP endpoint. Supports `initialize`, `ping`, `tools/list`, and `tools/call`. Requires the same API token as `/print`.
+* **GET `/mcp`** - Returns `405 Method Not Allowed`; this server does not need unsolicited server-to-client MCP streams.
 
 ## MCP tools
 
@@ -28,6 +28,14 @@ The MCP endpoint exposes these tools:
 | `getPrinterStatus` | Returns MQTT and renderer status/configuration. |
 
 MCP tool definitions use `inputSchema` and tool calls return MCP-style `content`, `structuredContent`, and `isError` fields.
+
+The MCP transport is stateless Streamable HTTP for protocol version `2025-11-25`. Clients should send one JSON-RPC message per `POST /mcp` request with:
+
+* `Accept: application/json, text/event-stream`
+* `MCP-Protocol-Version: 2025-11-25` after initialization
+* `Authorization: Bearer <API_TOKEN>`
+
+The server returns JSON responses directly instead of opening SSE streams. `GET /mcp` is intentionally disabled with `405` because PrintEasy does not send unsolicited MCP requests or notifications. If browser-based clients are used, set `MCP_ALLOWED_ORIGINS` to a comma-separated list of allowed origins; same-host origins are accepted automatically.
 
 ## Configuration
 
@@ -45,6 +53,7 @@ The service reads configuration values from environment variables.  Copy `.env.e
 | `PRINT_QUEUE_MAX_JOBS` | Maximum pending scheduled jobs kept in memory. Defaults to `100`. |
 | `PRINT_QUEUE_RETRY_MS` | Retry interval for due queued jobs while MQTT is disconnected or publish fails. Defaults to `5000`. |
 | `PRINT_QUEUE_HISTORY_LIMIT` | Number of published/cancelled queue entries to keep in memory for inspection. Defaults to `50`. |
+| `MCP_ALLOWED_ORIGINS` | Optional comma-separated list of browser origins allowed to call `/mcp`. Requests with no `Origin` header are allowed; requests whose origin host matches the request host are allowed. |
 | `PRINTER_CPL` | Characters per line for receipt formatting.  Defaults to 42 for 58 mm paper. |
 | `PRINTER_COMMAND` | Command set for receiptline to generate (default `escpos`). |
 | `PRINTER_ENCODING` | Character encoding (default `multilingual`). |
@@ -148,6 +157,8 @@ Normal markdown, headings, bullets, numbered lists, GitHub-style checkboxes, hor
    ```sh
    curl -X POST http://localhost:3000/mcp \
      -H "Authorization: Bearer <API_TOKEN>" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "MCP-Protocol-Version: 2025-11-25" \
      -H "Content-Type: application/json" \
      --data-raw '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
    ```
@@ -157,6 +168,8 @@ Normal markdown, headings, bullets, numbered lists, GitHub-style checkboxes, hor
    ```sh
    curl -X POST http://localhost:3000/mcp \
      -H "Authorization: Bearer <API_TOKEN>" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "MCP-Protocol-Version: 2025-11-25" \
      -H "Content-Type: application/json" \
      --data-raw '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"previewReceipt","arguments":{"markdown":"# Test\n\n- [ ] Print from MCP","includeHex":true,"maxBytes":64}}}'
    ```

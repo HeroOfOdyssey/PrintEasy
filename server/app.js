@@ -23,7 +23,7 @@ const PORT = process.env.PORT || 3000;
 const HOST = process.env.HOST || '0.0.0.0';
 const SERVER_NAME = 'printeasy-mqtt-printer';
 const SERVER_VERSION = '1.0.0';
-const MCP_PROTOCOL_VERSION = '2025-06-18';
+const MCP_PROTOCOL_VERSION = '2025-11-25';
 
 // Environment variables
 const API_TOKEN = process.env.API_TOKEN || '';
@@ -47,6 +47,10 @@ const ALLOW_TOPIC_OVERRIDE = (process.env.ALLOW_TOPIC_OVERRIDE || 'false').toLow
 const PRINT_QUEUE_MAX_JOBS = parseInt(process.env.PRINT_QUEUE_MAX_JOBS || '100', 10);
 const PRINT_QUEUE_RETRY_MS = parseInt(process.env.PRINT_QUEUE_RETRY_MS || '5000', 10);
 const PRINT_QUEUE_HISTORY_LIMIT = parseInt(process.env.PRINT_QUEUE_HISTORY_LIMIT || '50', 10);
+const MCP_ALLOWED_ORIGINS = (process.env.MCP_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 // Configure Express to parse text and JSON bodies
 app.use(express.text({ type: ['text/*', 'application/octet-stream'], limit: '64kb' }));
@@ -726,13 +730,12 @@ function decodeRawEscPos(args = {}) {
 }
 
 // -----------------------------------------------------------------------------
-// MCP / SSE support
+// MCP Streamable HTTP support
 //
 // The Model Context Protocol (MCP) allows AI assistants to discover and call
-// external tools.  For convenience, this server exposes an MCP-compatible
-// implementation using JSON-RPC 2.0 over HTTP and optional Server-Sent Events
-// (SSE). Clients can initialize the MCP session, list tools, call tools, and
-// subscribe to result notifications over `/mcp/sse`.
+// external tools. This server implements the stateless Streamable HTTP transport:
+// clients POST one JSON-RPC message at a time to `/mcp`. The server returns one
+// JSON response for requests and 202 Accepted for notifications/responses.
 
 // Define the tool metadata for MCP.  Tools are objects with a name,
 // description and JSON Schema describing the accepted arguments.  Clients
@@ -908,54 +911,54 @@ const mcpTools = [
   },
 ];
 
-// Maintain a list of active SSE clients.  Each entry is an Express response
-// object that we can write to when sending events.
-const sseClients = new Set();
-
-// SSE endpoint for MCP.  Clients can open an EventSource to this URL
-// (`/mcp/sse`) to receive tool definitions and invocation results.  This
-// endpoint sends an initial `tools` event containing the list of available
-// tools, then keeps the connection open for subsequent events.
-app.get('/mcp/sse', requireApiToken, (req, res) => {
-  // Only allow text/event-stream connections
-  const accept = req.get('accept') || '';
-  if (!accept.includes('text/event-stream')) {
-    return res.status(406).send('Not Acceptable');
-  }
-  // Set headers for SSE
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-  // Send the current tool list immediately
-  const toolsPayload = { jsonrpc: '2.0', method: 'notifications/tools/list_changed' };
-  res.write(`event: tools\n`);
-  res.write(`data: ${JSON.stringify(toolsPayload)}\n\n`);
-  // Add to client list
-  sseClients.add(res);
-  // Remove the client when the connection closes
-  req.on('close', () => {
-    sseClients.delete(res);
-  });
-});
-
-// Helper to broadcast an MCP response to all SSE clients.  Uses the `result`
-// event type.  Assumes the object contains `jsonrpc`, `id` and `result`.
-function broadcastMcpResult(message) {
-  const data = JSON.stringify(message);
-  for (const client of sseClients) {
-    try {
-      client.write(`event: result\n`);
-      client.write(`data: ${data}\n\n`);
-    } catch (err) {
-      // If we fail to write, remove the client
-      sseClients.delete(client);
-    }
-  }
-}
-
 function jsonRpcError(id, code, message) {
   return { jsonrpc: '2.0', id, error: { code, message } };
+}
+
+function isJsonRpcRequest(message) {
+  return message && typeof message === 'object' && typeof message.method === 'string' && message.id !== undefined;
+}
+
+function isJsonRpcNotification(message) {
+  return message && typeof message === 'object' && typeof message.method === 'string' && message.id === undefined;
+}
+
+function isJsonRpcResponse(message) {
+  return message && typeof message === 'object' && typeof message.method !== 'string' && message.id !== undefined
+    && (Object.prototype.hasOwnProperty.call(message, 'result') || Object.prototype.hasOwnProperty.call(message, 'error'));
+}
+
+function accepts(req, contentType) {
+  const accept = req.get('accept') || '';
+  return accept.split(',').some((entry) => entry.split(';')[0].trim().toLowerCase() === contentType);
+}
+
+function validMcpProtocolVersion(req) {
+  const version = req.get('mcp-protocol-version');
+  return !version || version === MCP_PROTOCOL_VERSION || version === '2025-06-18' || version === '2025-03-26';
+}
+
+function validateMcpOrigin(req, res, next) {
+  const origin = req.get('origin');
+  if (!origin) {
+    return next();
+  }
+
+  let parsedOrigin;
+  try {
+    parsedOrigin = new URL(origin);
+  } catch (err) {
+    return res.status(403).json(jsonRpcError(null, -32000, 'Forbidden origin'));
+  }
+
+  const host = req.get('host');
+  const sameHost = host && parsedOrigin.host.toLowerCase() === host.toLowerCase();
+  const explicitlyAllowed = MCP_ALLOWED_ORIGINS.includes(origin);
+  if (!sameHost && !explicitlyAllowed) {
+    return res.status(403).json(jsonRpcError(null, -32000, 'Forbidden origin'));
+  }
+
+  return next();
 }
 
 function printerStatus() {
@@ -1110,9 +1113,7 @@ async function handleMcpRequest(message) {
         return jsonRpcError(id, -32602, 'Tool name is required.');
       }
       const result = await callMcpTool(name, args || {});
-      const response = { jsonrpc: '2.0', id, result };
-      broadcastMcpResult(response);
-      return response;
+      return { jsonrpc: '2.0', id, result };
     } catch (error) {
       return {
         jsonrpc: '2.0',
@@ -1125,22 +1126,56 @@ async function handleMcpRequest(message) {
   return jsonRpcError(id, -32601, 'Method not found');
 }
 
-// MCP JSON‑RPC endpoint.  Handles discovery (`tools/list`) and invocation
-// (`tools/call`).  The request body should be a JSON object with
-// jsonrpc: '2.0', id, method and params.  Tool invocation publishes a job
-// directly to MQTT.  The server returns a JSON‑RPC response and also
-// broadcasts the result to SSE clients.
-app.post('/mcp', requireApiToken, async (req, res) => {
+// MCP Streamable HTTP endpoint. Handles discovery (`tools/list`) and invocation
+// (`tools/call`). The request body must be one JSON-RPC request, notification,
+// or response. This implementation is stateless and returns application/json
+// responses rather than streaming SSE responses.
+app.get('/mcp', validateMcpOrigin, requireApiToken, (req, res) => {
+  res.setHeader('MCP-Protocol-Version', MCP_PROTOCOL_VERSION);
+  if (!validMcpProtocolVersion(req)) {
+    return res.status(400).json(jsonRpcError(null, -32000, 'Unsupported MCP-Protocol-Version'));
+  }
+  if (!accepts(req, 'text/event-stream')) {
+    return res.status(406).json(jsonRpcError(null, -32000, 'Accept must include text/event-stream'));
+  }
+  return res.status(405).set('Allow', 'POST').json(jsonRpcError(null, -32000, 'Server-initiated MCP streams are not supported'));
+});
+
+app.delete('/mcp', validateMcpOrigin, requireApiToken, (req, res) => {
+  res.setHeader('MCP-Protocol-Version', MCP_PROTOCOL_VERSION);
+  if (!validMcpProtocolVersion(req)) {
+    return res.status(400).json(jsonRpcError(null, -32000, 'Unsupported MCP-Protocol-Version'));
+  }
+  return res.status(405).set('Allow', 'POST').json(jsonRpcError(null, -32000, 'MCP sessions are stateless and cannot be deleted'));
+});
+
+app.post('/mcp', validateMcpOrigin, requireApiToken, async (req, res) => {
+  res.setHeader('MCP-Protocol-Version', MCP_PROTOCOL_VERSION);
+
+  if (!validMcpProtocolVersion(req)) {
+    return res.status(400).json(jsonRpcError(null, -32000, 'Unsupported MCP-Protocol-Version'));
+  }
+  if (!accepts(req, 'application/json') || !accepts(req, 'text/event-stream')) {
+    return res.status(406).json(jsonRpcError(null, -32000, 'Accept must include application/json and text/event-stream'));
+  }
+
   const payload = req.body;
   if (Array.isArray(payload)) {
-    if (!payload.length) {
-      return res.status(400).json(jsonRpcError(null, -32600, 'Invalid Request'));
-    }
-    const responses = (await Promise.all(payload.map(handleMcpRequest))).filter(Boolean);
-    return responses.length ? res.json(responses) : res.status(204).end();
+    return res.status(400).json(jsonRpcError(null, -32600, 'Batch requests are not supported by Streamable HTTP'));
   }
+  if (isJsonRpcResponse(payload)) {
+    return res.status(202).end();
+  }
+  if (isJsonRpcNotification(payload)) {
+    const response = await handleMcpRequest(payload);
+    return response ? res.status(400).json(response) : res.status(202).end();
+  }
+  if (!isJsonRpcRequest(payload)) {
+    return res.status(400).json(jsonRpcError(null, -32600, 'Invalid Request'));
+  }
+
   const response = await handleMcpRequest(payload);
-  return response ? res.json(response) : res.status(204).end();
+  return response ? res.type('application/json').json(response) : res.status(202).end();
 });
 
 

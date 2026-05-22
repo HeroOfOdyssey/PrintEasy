@@ -9,7 +9,7 @@ The included clients cover Linux/Raspberry Pi, ESP32, and serial-first microcont
 The system consists of two major components:
 
 1. **Server (`./server`)** - A Node.js service that exposes HTTP and MCP interfaces for creating print jobs. It converts markdown or task lists into ESC/POS commands using [`receiptline`](https://github.com/receiptline/receiptline), rasterizes markdown/images with `sharp`, generates native ESC/POS QR codes, and publishes the resulting binary payload to an MQTT topic.
-   The MCP endpoint supports `initialize`, `ping`, `tools/list`, and `tools/call` with tools for printing, previewing, publishing trusted raw ESC/POS, and checking status.
+   The MCP endpoint uses stateless Streamable HTTP and supports `initialize`, `ping`, `tools/list`, and `tools/call` with tools for printing, previewing, publishing trusted raw ESC/POS, and checking status.
 
 2. **Clients (`./clients`)** - Device bridges that subscribe to the MQTT print topic and forward raw ESC/POS bytes to a printer. The Linux/Raspberry Pi client supports serial, raw USB, and Bluetooth RFCOMM. The ESP32 Arduino client supports Bluetooth Classic SPP. ESP8266 and Pico W/Pico 2 W clients provide serial-first microcontroller paths.
 
