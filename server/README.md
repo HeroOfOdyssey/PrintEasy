@@ -49,6 +49,7 @@ The service reads configuration values from environment variables.  Copy `.env.e
 | `MQTT_CA_CERT` | Optional CA certificate path used to verify a private/self-signed TLS broker. |
 | `MQTT_USER` / `MQTT_PASS` | Credentials for the MQTT broker if authentication is required. |
 | `MQTT_TOPIC` | Topic to which print jobs are published.  Clients should subscribe to this exact topic. |
+| `MQTT_PUBLISH_CHUNK_BYTES` | Maximum ESC/POS bytes per MQTT message. Defaults to `1800`, which fits the default ESP32 `2048` receive buffer with topic and MQTT packet overhead. Set `0` to publish each job as one MQTT message. |
 | `ALLOW_TOPIC_OVERRIDE` | When `true`, MCP requests may publish to a `topic` argument instead of only `MQTT_TOPIC`. Defaults to `false`. |
 | `PRINT_QUEUE_MAX_JOBS` | Maximum pending scheduled jobs kept in memory. Defaults to `100`. |
 | `PRINT_QUEUE_RETRY_MS` | Retry interval for due queued jobs while MQTT is disconnected or publish fails. Defaults to `5000`. |

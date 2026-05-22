@@ -112,7 +112,7 @@ curl -X POST http://localhost:3000/print \
 
 For ESP32, ESP8266, and Pico W clients, use compact TLS certificates. Prefer an ECDSA P-256 CA and broker certificate; large RSA certificates, especially RSA-4096, can exhaust heap during X.509 parsing. The broker certificate must include the exact DNS name or IP address used by the client in its subject alternative names. If a client has trouble verifying an IP-address certificate, use a direct DNS name that resolves to the broker, such as a `nip.io` name, and include that DNS name in the broker certificate.
 
-Microcontroller clients have limited RAM. TLS, Bluetooth Classic, and large raster MQTT payloads compete for heap. If small jobs work but raster/image jobs fail, reduce the client MQTT buffer and lower server `RASTER_BAND_HEIGHT`, or use the Linux/Raspberry Pi client for larger jobs.
+Microcontroller clients have limited RAM. TLS, Bluetooth Classic, and large raster MQTT payloads compete for heap. If TLS fails, reduce the client MQTT buffer. If small jobs print but larger raster/image jobs never arrive, lower server `MQTT_PUBLISH_CHUNK_BYTES` so each MQTT message fits the client buffer, or use the Linux/Raspberry Pi client for larger jobs.
 
 ## Why MQTT?
 

@@ -6,7 +6,7 @@ PrintEasy clients all implement the same small contract:
 MQTT broker -> subscribed client -> raw byte write -> ESC/POS printer
 ```
 
-The server publishes printer-ready ESC/POS bytes. Clients do not parse JSON, render markdown, or reinterpret text. They receive the MQTT payload as bytes and write those bytes unchanged to the configured printer transport.
+The server publishes printer-ready ESC/POS bytes. Clients do not parse JSON, render markdown, or reinterpret text. They receive each MQTT payload as bytes and write those bytes unchanged to the configured printer transport.
 
 ## MQTT contract
 
@@ -15,6 +15,7 @@ The server publishes printer-ready ESC/POS bytes. Clients do not parse JSON, ren
 | Topic | `receipt/print` | Must match `MQTT_TOPIC` on the server. |
 | QoS | `1` | The server publishes with QoS 1. Clients should subscribe with QoS 1 when supported. |
 | Payload | Binary ESC/POS bytes | Not UTF-8 text and not JSON. Preserve null bytes and control bytes. |
+| Chunking | `1800` bytes by default | One print job may arrive as multiple MQTT messages on the same topic. Write each payload to the printer in arrival order. |
 | Reconnect | Required | Clients should reconnect to Wi-Fi/network, MQTT, and printer transport after failures. |
 
 ## Printer transport contract
@@ -26,22 +27,22 @@ Supported transport families:
 * Raw USB printer devices such as `/dev/usb/lp0`.
 * TCP sockets for network printers, if a client implementation adds that transport.
 
-The client should write the payload in order and flush when the platform supports flushing. For low-memory devices or flaky links, chunked writes are safer than one very large write.
+The client should write payloads in order and flush when the platform supports flushing. The server can split one ESC/POS job across multiple MQTT messages with `MQTT_PUBLISH_CHUNK_BYTES`, which lets low-memory clients keep smaller MQTT receive buffers.
 
 ## Buffer sizing
 
-Raster jobs are much larger than plain text jobs. A client buffer that works for text can silently fail for images or rasterized markdown.
+Raster jobs are much larger than plain text jobs. A client buffer that works for text can silently fail for images or rasterized markdown unless the server chunks MQTT publishes below the client receive limit.
 
 Recommended minimums:
 
 | Client type | Recommended receive/write buffer |
 |---|---:|
 | Linux/Raspberry Pi | Streamed payload handling; optional write chunk size `4096` or larger. |
-| ESP32 Arduino | Start around `8192` for TLS + Bluetooth Classic heap headroom; increase only if payloads are too large and memory allows. |
+| ESP32 Arduino | Start around `2048` for TLS + Bluetooth Classic heap headroom on WROOM-32 boards; keep server `MQTT_PUBLISH_CHUNK_BYTES` at `1800` or lower. |
 | ESP8266 Arduino | `8192` to `16384` if memory allows; lower `RASTER_BAND_HEIGHT` on the server if needed. |
 | Pico W / Pico 2 W | Default firmware buffer `32768`; tune server raster band height if memory is tight. |
 
-If a device drops large image jobs, reduce `RASTER_BAND_HEIGHT` on the server and retest with `/preview` or the MCP `previewReceipt` tool.
+If a device drops large image jobs, reduce `MQTT_PUBLISH_CHUNK_BYTES` below the device receive buffer. `RASTER_BAND_HEIGHT` can still help printer transport smoothness, but it does not by itself split MQTT messages.
 
 When using MQTT over TLS on microcontrollers, certificate size matters. Prefer ECDSA P-256 CA/broker certificates and avoid RSA-4096 chains, which can exhaust heap during X.509 parsing. The broker certificate must include the exact DNS name or IP address used by the client.
 
@@ -58,7 +59,7 @@ When using MQTT over TLS on microcontrollers, certificate size matters. Prefer E
 
 1. Subscribe to `MQTT_TOPIC`.
 2. Treat payloads as bytes, not strings.
-3. Use buffers large enough for raster jobs.
+3. Use buffers large enough for the configured MQTT publish chunk size.
 4. Reconnect after network, MQTT, and printer failures.
 5. Write exactly the received bytes to the printer.
 6. Log byte counts and failures so printer-side issues are diagnosable.

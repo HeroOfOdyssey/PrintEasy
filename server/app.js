@@ -32,6 +32,7 @@ const MQTT_USER = process.env.MQTT_USER || undefined;
 const MQTT_PASS = process.env.MQTT_PASS || undefined;
 const MQTT_CA_CERT = process.env.MQTT_CA_CERT || undefined;
 const MQTT_TOPIC = process.env.MQTT_TOPIC || 'receipt/print';
+const MQTT_PUBLISH_CHUNK_BYTES = parseInt(process.env.MQTT_PUBLISH_CHUNK_BYTES || '1800', 10);
 const PRINTER_CPL = parseInt(process.env.PRINTER_CPL || '42', 10);
 const PRINTER_COMMAND = process.env.PRINTER_COMMAND || 'escpos';
 const PRINTER_ENCODING = process.env.PRINTER_ENCODING || 'multilingual';
@@ -297,10 +298,12 @@ async function publishOrQueueEscPos(escpos, topic, options = {}) {
     };
   }
 
-  await publishEscPos(escpos, topic);
+  const publishResult = await publishEscPos(escpos, topic);
   return {
     ok: true,
     queued: false,
+    chunks: publishResult.chunks,
+    chunkBytes: publishResult.chunkBytes,
   };
 }
 
@@ -643,10 +646,35 @@ function publishEscPos(escpos, topic = MQTT_TOPIC) {
   if (!mqttConnected) {
     throw new Error('MQTT broker not connected');
   }
+
+  const chunkSize = Number.isFinite(MQTT_PUBLISH_CHUNK_BYTES) && MQTT_PUBLISH_CHUNK_BYTES > 0
+    ? MQTT_PUBLISH_CHUNK_BYTES
+    : escpos.length;
+  const chunks = Math.max(1, Math.ceil(escpos.length / chunkSize));
+
   return new Promise((resolve, reject) => {
-    mqttClient.publish(topic, escpos, { qos: 1 }, (err) => {
-      if (err) reject(err); else resolve();
-    });
+    let offset = 0;
+
+    function publishNext() {
+      if (offset >= escpos.length) {
+        resolve({ chunks, chunkBytes: chunkSize });
+        return;
+      }
+
+      const nextOffset = Math.min(offset + chunkSize, escpos.length);
+      const chunk = escpos.subarray(offset, nextOffset);
+      offset = nextOffset;
+
+      mqttClient.publish(topic, chunk, { qos: 1 }, (err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        publishNext();
+      });
+    }
+
+    publishNext();
   });
 }
 
@@ -966,6 +994,7 @@ function printerStatus() {
     ok: true,
     mqtt: mqttConnected,
     topic: MQTT_TOPIC,
+    publishChunkBytes: MQTT_PUBLISH_CHUNK_BYTES,
     topicOverrideAllowed: ALLOW_TOPIC_OVERRIDE,
     queue: {
       pending: printQueue.length,
@@ -996,6 +1025,8 @@ async function callMcpTool(name, args = {}) {
       ok: true,
       bytes: escpos.length,
       topic,
+      chunks: publishResult.chunks,
+      chunkBytes: publishResult.chunkBytes,
       queued: publishResult.queued,
       job: publishResult.job,
       mode: RASTER_MARKDOWN ? 'raster' : 'receiptline',
@@ -1036,6 +1067,8 @@ async function callMcpTool(name, args = {}) {
       queued: false,
       bytes: escpos.length,
       topic,
+      chunks: publishResult.chunks,
+      chunkBytes: publishResult.chunkBytes,
     });
   }
 
@@ -1215,6 +1248,8 @@ app.post('/print', requireApiToken, async (req, res) => {
       queued: result.queued,
       job: result.job,
       bytes: escpos.length,
+      chunks: result.chunks,
+      chunkBytes: result.chunkBytes,
       topic: MQTT_TOPIC,
       mode: RASTER_MARKDOWN ? 'raster' : 'receiptline',
       widthDots: PRINTER_DOTS,

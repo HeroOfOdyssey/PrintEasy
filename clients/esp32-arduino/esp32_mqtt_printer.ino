@@ -51,8 +51,10 @@ uint8_t PRINTER_BT_MAC[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 // ==== Runtime settings ====
 static const unsigned long RECONNECT_INTERVAL = 5000; // retry connections every 5 seconds
-// Must fit the largest MQTT print payload. Keep lower for TLS + Bluetooth heap headroom.
-static const uint16_t MQTT_BUFFER_SIZE = 8192;
+// Must fit the largest MQTT print payload. 2048 leaves much more heap for TLS
+// plus Bluetooth Classic on ESP32-WROOM boards; lower the server raster band
+// height if your print payloads are too large for this buffer.
+static const uint16_t MQTT_BUFFER_SIZE = 2048;
 
 #if MQTT_TLS
 WiFiClientSecure wifiClient;
@@ -157,6 +159,8 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print(topic);
   Serial.print("] bytes=");
   Serial.println(length);
+
+  connectPrinter();
   if (!printerConnected) {
     Serial.println("Printer not connected; dropping payload");
     return;
@@ -184,13 +188,18 @@ void setup() {
   mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
   mqttClient.setCallback(mqttCallback);
   mqttClient.setBufferSize(MQTT_BUFFER_SIZE);
+
+  // Establish Wi-Fi/TLS/MQTT before connecting the printer. Bluetooth Classic
+  // can fragment heap; this order has proven more reliable on WROOM-32 boards.
+  connectWiFi();
+  connectMQTT();
+  connectPrinter();
 }
 
 void loop() {
   // Ensure Wi‑Fi connectivity
   connectWiFi();
-  // Connect to printer if not already
-  connectPrinter();
+
   // Connect to MQTT broker
   if (!mqttClient.connected()) {
     unsigned long now = millis();
@@ -201,5 +210,12 @@ void loop() {
   }
   // Maintain MQTT connection
   mqttClient.loop();
+
+  // Keep printer connection available, but avoid doing this before MQTT/TLS
+  // setup because Bluetooth Classic can reduce the largest free heap block.
+  if (!printerConnected || !SerialBT.connected()) {
+    connectPrinter();
+  }
+
   delay(10);
 }

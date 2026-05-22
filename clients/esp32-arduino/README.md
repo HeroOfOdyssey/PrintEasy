@@ -24,7 +24,7 @@ Open `esp32_mqtt_printer.ino` and edit the following constants at the top of the
 | `PRINTER_BT_USE_MAC` | Set `true` to connect by Bluetooth MAC address, or `false` to connect by printer name. |
 | `PRINTER_BT_MAC` | Printer Bluetooth MAC address as six hex bytes, for example `0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF`. Used when `PRINTER_BT_USE_MAC` is `true`. |
 | `PRINTER_BT_NAME` | Bluetooth device name. This is ignored when `PRINTER_BT_USE_MAC` is `true`; it is only used when `PRINTER_BT_USE_MAC` is `false`. |
-| `MQTT_BUFFER_SIZE` | MQTT receive buffer size. It must be larger than the largest ESC/POS packet sent by the server. The default sketch uses `8192` to leave heap for TLS and Bluetooth Classic. |
+| `MQTT_BUFFER_SIZE` | MQTT receive buffer size. It must be larger than the server's `MQTT_PUBLISH_CHUNK_BYTES` plus MQTT topic/packet overhead. The default sketch uses `2048` to leave heap for TLS and Bluetooth Classic on ESP32-WROOM boards. |
 
 If your printer prompts for a pairing PIN, set `SerialBT.setPin("0000")` accordingly in `setup()`.
 
@@ -49,7 +49,11 @@ Recommended Arduino settings for ESP32-WROOM-32/32U-style boards:
 | Flash Frequency | `80MHz` |
 | PSRAM | `Disabled`, unless your board reports real PSRAM |
 
-If TLS and Bluetooth Classic run out of heap on ESP32 Arduino core 3.x, try core `2.0.17`. The sketch handles the pairing PIN API difference between 2.x and 3.x.
+If TLS and Bluetooth Classic run out of heap on ESP32 Arduino core 3.x, try core `2.0.17`. The sketch handles the pairing PIN API difference between 2.x and 3.x. On ESP32-WROOM-32/32U boards, a `2048` MQTT buffer has been more reliable than larger buffers when TLS certificate verification and Bluetooth Classic are both enabled.
+
+The sketch starts the Bluetooth stack early but connects MQTT before connecting to the printer. This leaves a larger contiguous heap block for the TLS handshake; connecting the printer first can make `SSL - Memory allocation failed` more likely even when total free heap still looks reasonable.
+
+If an MQTT message is larger than `MQTT_BUFFER_SIZE`, PubSubClient may not deliver the callback for that message. Keep the server-side `MQTT_PUBLISH_CHUNK_BYTES` at `1800` or lower for the default `2048` ESP32 buffer. `RASTER_BAND_HEIGHT` changes the ESC/POS raster command bands sent inside the job, but MQTT chunking is what makes large jobs fit this small receive buffer.
 
 The sketch does not send periodic newline keepalives to the printer. Newlines advance receipt paper, so printer wake behavior should be handled by the printer or by real print jobs, not by idle keepalive bytes.
 
@@ -57,7 +61,8 @@ The sketch does not send periodic newline keepalives to the printer. Newlines ad
 
 * `MQTT failed, state=-2` means the network/TLS socket did not connect; check TLS errors printed after it.
 * `X509 - Allocation of memory failed` usually means the certificate chain is too large; use ECDSA P-256 certificates.
-* `SSL - Memory allocation failed` usually means TLS and Bluetooth Classic are competing for heap; reduce `MQTT_BUFFER_SIZE`, use ESP32 core `2.0.17`, or reduce server `RASTER_BAND_HEIGHT`.
+* `SSL - Memory allocation failed` usually means TLS and Bluetooth Classic are competing for heap; use a smaller `MQTT_BUFFER_SIZE`, connect MQTT before connecting the printer, or use ESP32 core `2.0.17`.
+* Small jobs print but larger jobs never arrive usually means the MQTT message is bigger than `MQTT_BUFFER_SIZE`; lower server `MQTT_PUBLISH_CHUNK_BYTES`.
 * `MQTT_TLS_INSECURE=1` still encrypts traffic but disables broker identity verification. Use it only as a diagnostic to separate certificate verification problems from connectivity problems.
 
 ## MQTT topic format
