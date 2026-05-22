@@ -21,7 +21,9 @@ Open `esp32_mqtt_printer.ino` and edit the following constants at the top of the
 | `MQTT_USER`, `MQTT_PASS` | Broker credentials. Treat `MQTT_PASS` as the device access token. |
 | `MQTT_CA_CERT` | PEM CA certificate that signed the broker certificate. Required when `MQTT_TLS` is `1`. |
 | `MQTT_TOPIC` | Topic to subscribe to for print jobs (must match the server’s setting). |
-| `PRINTER_BT_NAME` | The Bluetooth device name of your printer (as seen when pairing).  Alternatively, hard‑code the MAC address in the sketch and call `SerialBT.connect(uint8_t[6])`. |
+| `PRINTER_BT_USE_MAC` | Set `true` to connect by Bluetooth MAC address, or `false` to connect by printer name. |
+| `PRINTER_BT_MAC` | Printer Bluetooth MAC address as six hex bytes, for example `0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF`. Used when `PRINTER_BT_USE_MAC` is `true`. |
+| `PRINTER_BT_NAME` | Bluetooth device name. This is ignored when `PRINTER_BT_USE_MAC` is `true`; it is only used when `PRINTER_BT_USE_MAC` is `false`. |
 | `MQTT_BUFFER_SIZE` | MQTT receive buffer size. It must be larger than the largest ESC/POS packet sent by the server. The default sketch uses `16384`, which fits the default raster band size. |
 | `BT_WAKE_INTERVAL` | Milliseconds between sending a newline to the printer.  Prevents the printer from going into power‑save mode. |
 

@@ -35,8 +35,11 @@ replace-with-your-printeasy-ca-certificate
 const char* NTP_SERVER = "pool.ntp.org";
 
 // ==== Printer configuration ====
-const char* PRINTER_BT_NAME = "TM-P60II"; // Bluetooth device name of the Epson printer
-// If you know the MAC address, you can use `connect(uint8_t[])` instead of name
+// Set PRINTER_BT_USE_MAC to false if you prefer to connect by Bluetooth name.
+// PRINTER_BT_NAME is ignored while PRINTER_BT_USE_MAC is true.
+const char* PRINTER_BT_NAME = "TM-P60II";
+const bool PRINTER_BT_USE_MAC = true;
+uint8_t PRINTER_BT_MAC[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
 // ==== Keep‑alive settings ====
 static const unsigned long BT_WAKE_INTERVAL = 60000; // send wake newline every 60 seconds
@@ -85,8 +88,11 @@ void connectPrinter() {
   }
   printerConnected = false;
   Serial.println("Connecting to Bluetooth printer...");
-  // connect by name
-  printerConnected = SerialBT.connect(PRINTER_BT_NAME);
+  if (PRINTER_BT_USE_MAC) {
+    printerConnected = SerialBT.connect(PRINTER_BT_MAC);
+  } else {
+    printerConnected = SerialBT.connect(PRINTER_BT_NAME);
+  }
   if (printerConnected) {
     Serial.println("Printer connected");
   } else {
