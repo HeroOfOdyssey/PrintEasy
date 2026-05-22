@@ -34,9 +34,10 @@ const MQTT_CA_CERT = process.env.MQTT_CA_CERT || undefined;
 const MQTT_TOPIC = process.env.MQTT_TOPIC || 'receipt/print';
 const MQTT_PUBLISH_CHUNK_BYTES = parseInt(process.env.MQTT_PUBLISH_CHUNK_BYTES || '1800', 10);
 const PRINTER_CPL = parseInt(process.env.PRINTER_CPL || '42', 10);
-const PRINTER_COMMAND = process.env.PRINTER_COMMAND || 'escpos';
+const PRINTER_COMMAND = process.env.PRINTER_COMMAND || 'epson';
 const PRINTER_ENCODING = process.env.PRINTER_ENCODING || 'multilingual';
 const PRINTER_DOTS = parseInt(process.env.PRINTER_DOTS || '420', 10);
+const IMAGE_RENDERER = (process.env.IMAGE_RENDERER || 'receiptline').toLowerCase();
 const RASTER_BAND_HEIGHT = parseInt(process.env.RASTER_BAND_HEIGHT || '192', 10);
 const RASTER_THRESHOLD = parseInt(process.env.RASTER_THRESHOLD || '160', 10);
 const RASTER_MARKDOWN = (process.env.RASTER_MARKDOWN || 'true').toLowerCase() !== 'false';
@@ -343,12 +344,19 @@ function scheduleOptionsFromRequest(req, source) {
 }
 
 // Convert markdown to ESC/POS bytes
-function toEscPos(markdown) {
-  const binaryString = receiptline.transform(markdown, {
+function receiptlineOptions(overrides = {}) {
+  return {
     cpl: PRINTER_CPL,
     encoding: PRINTER_ENCODING,
     command: PRINTER_COMMAND,
-  });
+    threshold: RASTER_THRESHOLD,
+    gradient: false,
+    ...overrides,
+  };
+}
+
+function toEscPos(markdown) {
+  const binaryString = receiptline.transform(markdown, receiptlineOptions());
   return Buffer.from(binaryString, 'binary');
 }
 
@@ -419,7 +427,25 @@ async function imageToEscPos(base64, options = {}) {
   const commaIndex = base64.indexOf(',');
   const clean = commaIndex >= 0 ? base64.slice(commaIndex + 1) : base64;
   const imgBuffer = Buffer.from(clean, 'base64');
-  return imageBufferToEscPos(imgBuffer, { maxWidth, threshold });
+  if (IMAGE_RENDERER === 'gs_v_0') {
+    return imageBufferToEscPos(imgBuffer, { maxWidth, threshold });
+  }
+  return imageBufferToReceiptlineEscPos(imgBuffer, { maxWidth });
+}
+
+async function imageBufferToReceiptlineEscPos(imgBuffer, options = {}) {
+  const maxWidth = options.maxWidth || PRINTER_DOTS;
+  const image = sharp(imgBuffer);
+  const meta = await image.metadata();
+  const targetWidth = Math.min(meta.width || maxWidth, maxWidth);
+  const png = await image
+    .resize({ width: targetWidth, withoutEnlargement: true })
+    .flatten({ background: '#ffffff' })
+    .png()
+    .toBuffer();
+  const document = `{image:${png.toString('base64')}}`;
+  const binaryString = receiptline.transform(document, receiptlineOptions());
+  return Buffer.from(binaryString, 'binary');
 }
 
 /**
@@ -1004,6 +1030,8 @@ function printerStatus() {
     },
     renderer: {
       mode: RASTER_MARKDOWN ? 'raster' : 'receiptline',
+      command: PRINTER_COMMAND,
+      imageRenderer: IMAGE_RENDERER,
       widthDots: PRINTER_DOTS,
       bandHeight: RASTER_BAND_HEIGHT,
       threshold: RASTER_THRESHOLD,
