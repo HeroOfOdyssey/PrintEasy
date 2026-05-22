@@ -25,6 +25,7 @@ Open `esp32_mqtt_printer.ino` and edit the following constants at the top of the
 | `PRINTER_BT_MAC` | Printer Bluetooth MAC address as six hex bytes, for example `0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF`. Used when `PRINTER_BT_USE_MAC` is `true`. |
 | `PRINTER_BT_NAME` | Bluetooth device name. This is ignored when `PRINTER_BT_USE_MAC` is `true`; it is only used when `PRINTER_BT_USE_MAC` is `false`. |
 | `MQTT_BUFFER_SIZE` | MQTT receive buffer size. It must be larger than the server's `MQTT_PUBLISH_CHUNK_BYTES` plus MQTT topic/packet overhead. The default sketch uses `2048` to leave heap for TLS and Bluetooth Classic on ESP32-WROOM boards. |
+| `PRINTER_WRITE_CHUNK_SIZE`, `PRINTER_WRITE_DELAY_MS` | Bluetooth printer pacing. The default writes MQTT payloads to the printer in `256` byte chunks with a `10` ms delay so mobile printers do not miss large SPP bursts. |
 
 If your printer prompts for a pairing PIN, set `SerialBT.setPin("0000")` accordingly in `setup()`.
 
@@ -63,6 +64,7 @@ The sketch does not send periodic newline keepalives to the printer. Newlines ad
 * `X509 - Allocation of memory failed` usually means the certificate chain is too large; use ECDSA P-256 certificates.
 * `SSL - Memory allocation failed` usually means TLS and Bluetooth Classic are competing for heap; use a smaller `MQTT_BUFFER_SIZE`, connect MQTT before connecting the printer, or use ESP32 core `2.0.17`.
 * Small jobs print but larger jobs never arrive usually means the MQTT message is bigger than `MQTT_BUFFER_SIZE`; lower server `MQTT_PUBLISH_CHUNK_BYTES`.
+* MQTT messages arrive but nothing prints usually means the Bluetooth printer is not accepting the write burst; lower `PRINTER_WRITE_CHUNK_SIZE` to `128` or raise `PRINTER_WRITE_DELAY_MS` to `20`.
 * `MQTT_TLS_INSECURE=1` still encrypts traffic but disables broker identity verification. Use it only as a diagnostic to separate certificate verification problems from connectivity problems.
 
 ## MQTT topic format

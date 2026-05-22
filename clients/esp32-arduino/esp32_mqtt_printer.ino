@@ -55,6 +55,10 @@ static const unsigned long RECONNECT_INTERVAL = 5000; // retry connections every
 // plus Bluetooth Classic on ESP32-WROOM boards; lower the server raster band
 // height if your print payloads are too large for this buffer.
 static const uint16_t MQTT_BUFFER_SIZE = 2048;
+// Many mobile printers cannot accept large Bluetooth SPP bursts reliably.
+// Keep writes paced even when MQTT payloads arrive in larger chunks.
+static const size_t PRINTER_WRITE_CHUNK_SIZE = 256;
+static const unsigned long PRINTER_WRITE_DELAY_MS = 10;
 
 #if MQTT_TLS
 WiFiClientSecure wifiClient;
@@ -153,6 +157,31 @@ void connectMQTT() {
   }
 }
 
+bool writePrinterBytes(const byte* payload, unsigned int length) {
+  unsigned int offset = 0;
+  while (offset < length) {
+    if (!SerialBT.connected()) {
+      printerConnected = false;
+      Serial.println("Printer disconnected during write");
+      return false;
+    }
+
+    size_t remaining = length - offset;
+    size_t chunkSize = remaining < PRINTER_WRITE_CHUNK_SIZE ? remaining : PRINTER_WRITE_CHUNK_SIZE;
+    size_t written = SerialBT.write(payload + offset, chunkSize);
+    if (written == 0) {
+      Serial.println("Printer write stalled");
+      return false;
+    }
+
+    offset += written;
+    SerialBT.flush();
+    delay(PRINTER_WRITE_DELAY_MS);
+  }
+
+  return true;
+}
+
 // Callback for incoming MQTT messages
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
@@ -166,8 +195,10 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     return;
   }
   // Write raw bytes to the printer
-  SerialBT.write(payload, length);
-  SerialBT.flush();
+  if (writePrinterBytes(payload, length)) {
+    Serial.print("Printer wrote bytes=");
+    Serial.println(length);
+  }
   // Optionally send cut or form feed commands here if your printer supports them
 }
 
