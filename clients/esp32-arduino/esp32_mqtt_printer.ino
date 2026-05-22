@@ -137,7 +137,7 @@ void setup() {
     Serial.println("An error occurred initializing Bluetooth");
   }
   // Some Epson printers require pairing PIN 0000 or 1234
-  SerialBT.setPin("0000");
+  SerialBT.setPin("0000", 4);
   // Configure MQTT client
   mqttClient.setServer(MQTT_SERVER, MQTT_PORT);
   mqttClient.setCallback(mqttCallback);

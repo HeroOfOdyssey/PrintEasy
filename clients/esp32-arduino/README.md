@@ -33,7 +33,7 @@ TLS builds synchronize time from `NTP_SERVER` before connecting so certificate v
 
 1. Install the ESP32 platform into your Arduino IDE via the Boards Manager (see Espressif’s documentation).
 2. Install the `PubSubClient` library via the Arduino Library Manager.
-3. Connect your ESP32 board, select the correct board and port in the IDE, open `esp32_mqtt_printer.ino` and click “Upload”.
+3. Connect your ESP32 board, select the correct board and port in the IDE, open `esp32_mqtt_printer.ino` and click “Upload”. TLS plus Bluetooth Classic can exceed the default app partition on common ESP32 boards; select a large app partition such as `Huge APP (3MB No OTA/1MB SPIFFS)` when `MQTT_TLS` is enabled.
 4. Open the Serial Monitor at 115200 baud to see logs.  You should see messages about connecting to Wi‑Fi, the MQTT broker and the printer.
 
 ## MQTT topic format
