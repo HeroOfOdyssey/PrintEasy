@@ -72,11 +72,16 @@ void connectWiFi() {
   Serial.println(WiFi.localIP());
 #if MQTT_TLS
   configTime(0, 0, NTP_SERVER);
+  Serial.print("Waiting for NTP time");
   time_t now = time(nullptr);
   while (now < 1700000000) {
     delay(500);
+    Serial.print(".");
     now = time(nullptr);
   }
+  Serial.println();
+  Serial.print("TLS time ready: ");
+  Serial.println((long)now);
   wifiClient.setCACert(MQTT_CA_CERT);
 #endif
 }
@@ -103,15 +108,22 @@ void connectPrinter() {
 void connectMQTT() {
   if (mqttClient.connected()) return;
   Serial.println("Connecting to MQTT broker...");
+  Serial.print("MQTT endpoint: ");
+  Serial.print(MQTT_SERVER);
+  Serial.print(":");
+  Serial.println(MQTT_PORT);
   // Attempt connection
+  bool ok = false;
   if (MQTT_USER && MQTT_PASS) {
-    if (mqttClient.connect("esp32-printer", MQTT_USER, MQTT_PASS)) {
-      Serial.println("MQTT connected");
-    }
+    ok = mqttClient.connect("esp32-printer", MQTT_USER, MQTT_PASS);
   } else {
-    if (mqttClient.connect("esp32-printer")) {
-      Serial.println("MQTT connected");
-    }
+    ok = mqttClient.connect("esp32-printer");
+  }
+  if (ok) {
+    Serial.println("MQTT connected");
+  } else {
+    Serial.print("MQTT failed, state=");
+    Serial.println(mqttClient.state());
   }
   // On successful connection, subscribe to the topic
   if (mqttClient.connected()) {
