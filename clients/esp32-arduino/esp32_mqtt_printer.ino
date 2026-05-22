@@ -27,6 +27,7 @@ const uint16_t MQTT_PORT  = MQTT_TLS ? 8883 : 1883;
 const char* MQTT_USER     = "printeasy";        // set to MQTT username or nullptr
 const char* MQTT_PASS     = "change-me";        // set to MQTT password or nullptr
 const char* MQTT_TOPIC    = "receipt/print";     // topic to subscribe to
+#define MQTT_TLS_INSECURE 0                      // set to 1 only for TLS troubleshooting
 const char MQTT_CA_CERT[] PROGMEM = R"PEM(
 -----BEGIN CERTIFICATE-----
 replace-with-your-printeasy-ca-certificate
@@ -82,7 +83,12 @@ void connectWiFi() {
   Serial.println();
   Serial.print("TLS time ready: ");
   Serial.println((long)now);
+#if MQTT_TLS_INSECURE
+  wifiClient.setInsecure();
+#else
   wifiClient.setCACert(MQTT_CA_CERT);
+#endif
+  wifiClient.setHandshakeTimeout(30);
 #endif
 }
 
@@ -124,6 +130,14 @@ void connectMQTT() {
   } else {
     Serial.print("MQTT failed, state=");
     Serial.println(mqttClient.state());
+#if MQTT_TLS
+    char tlsError[160];
+    int tlsCode = wifiClient.lastError(tlsError, sizeof(tlsError));
+    Serial.print("TLS lastError=");
+    Serial.print(tlsCode);
+    Serial.print(" ");
+    Serial.println(tlsError);
+#endif
   }
   // On successful connection, subscribe to the topic
   if (mqttClient.connected()) {
